@@ -1,0 +1,353 @@
+#!/bin/bash
+
+unset http_proxy
+unset https_proxy
+
+
+###################################################################################
+#########                                                         #################
+#########        Copying variable and tfvar files from root       #################
+#########                                                         #################
+###################################################################################
+
+cp ../variables.tf .
+cp ../${SDLC_ENV}.tfvars .
+echo "Copied .tf and .tfvars into:"
+pwd
+rm -Rf ./.terraform/
+rm ./security_groups.tf
+echo "removed security_groups.tf and .terraform folder"
+cp ./security_groups/${SDLC_ENV}-security_groups.tf ./security_groups.tf
+echo "copied in correct security groups file"
+ls -al
+
+###################################################################################
+#########                                                         #################
+#########                   Terraform Init                        #################
+#########                                                         #################
+###################################################################################
+# first create a variable to pass for the product name in the path, based on branch
+if [[ "${BRANCH}" == "master" ]]; then
+    export BACKEND_PATH=${PRODUCT}${ENV_ALIAS}
+else
+    export BACKEND_PATH=${PRODUCT}${ENV_ALIAS}/${BRANCH}
+fi
+###################################################################################
+# need to set a region based on the DEPLOY_MODULE
+case "${DEPLOY_MODULE}" in
+  iam-prereqs)
+  export BACKEND_REGION="us-east-1"
+  ;;
+  global)
+  export BACKEND_REGION="us-east-1"
+  ;;
+  us-east-1)
+  export BACKEND_REGION="us-east-1"
+  ;;
+  us-west-2)
+  export BACKEND_REGION="us-west-2"
+  ;;
+  *)
+  # Default point to us-east-1
+  export BACKEND_REGION="us-east-1"
+esac
+
+###################################################################################
+# need to set the correct profile based on the sdlc
+case "${SDLC_ENV}" in
+  sbx)
+  export TF_PROFILE="${ACCOUNT_PREFIX}_dev"
+  ;;
+  dev)
+  export TF_PROFILE="${ACCOUNT_PREFIX}_dev"
+  ;;
+  int)
+  export TF_PROFILE="${ACCOUNT_PREFIX}_dev"
+  ;;
+  qa)
+  export TF_PROFILE="${ACCOUNT_PREFIX}_tst"
+  ;;
+  uat)
+  export TF_PROFILE="${ACCOUNT_PREFIX}_tst"
+  ;;
+  ops)
+  export TF_PROFILE="${ACCOUNT_PREFIX}_tst"
+  ;;
+  prd)
+  export TF_PROFILE="${ACCOUNT_PREFIX}_pro"
+  ;;
+  *)
+  echo "your SDLC was not recognized as valid"
+esac
+
+echo "TF_PROFILE is $TF_PROFILE"
+###################################################################################
+# need key based on TF_NEXUS_REPO/BACKEND_REGION/BUSSEG
+if [[ "${TF_NEXUS_REPO}" == "CSG" ]]; then
+    export CRITERIA="${ACCOUNTENV}"
+    echo "${CRITERIA}"
+    case "${CRITERIA}" in
+        npd)
+            export BACKEND_KMS="arn:aws:kms:us-east-1:455269238913:key/a4026ae6-e6d7-476c-899b-448530725e72"
+            ;;
+        prd)
+            export BACKEND_KMS="arn:aws:kms:us-east-1:481633605765:key/fc084af5-3b6e-4d98-884d-08081713ca6c"
+            ;;
+        *)
+        echo "something went wrong in case statement for CSG backend kms key"
+    esac
+else
+###################################################################################
+# need accountid based on BUSSEG
+    which aws
+    if [ $? != 0 ];then
+        echo "path variable doesnot contain aws binaries"
+        exit 1;
+    fi
+    echo "ACCOUNT_PREFIX_SDLC_ENV="${ACCOUNT_PREFIX}"_"${SDLC_ENV}
+    export BACKEND_ACCTID=$(aws sts get-caller-identity --profile $TF_PROFILE --query Account --output text)
+    echo "BACKEND_ACCTID="${BACKEND_ACCTID}
+    export STATE_KEY="${BUSSEG}_${SDLC_ENV}_us-east-1"
+    export BACKEND_TARGETKEYID=$(aws kms list-aliases --region us-east-1 --profile $TF_PROFILE --query "Aliases[?AliasName=='alias/br_${STATE_KEY}_terraform'].TargetKeyId" --output text)
+    echo "BACKEND_TARGETKEYID="${BACKEND_TARGETKEYID};
+    if [ -z "${BACKEND_TARGETKEYID}" ]; then
+        echo "BACKEND_TARGETKEYID not found"
+        exit 1;
+    else
+        export BACKEND_KMS="arn:aws:kms:us-east-1:${BACKEND_ACCTID}:key/${BACKEND_TARGETKEYID}"
+        echo "BACKEND_KMS="${BACKEND_KMS};
+    fi
+fi
+###################################################################################
+# create functions for different terraform init scenarions
+
+tf_init () {
+    if [[ "${DEPLOY_MODULE}" == "security_groups" ]]; then
+        echo "this is a generated deploy module. unwanted files will be removed to ensure backwards compatibilty"
+        rm -f variables.tf
+        echo "security groups deploy module - pull latest plato docker image"
+        docker pull ecr.npd.bfsaws.net/plato-terraform:latest 
+        echo "security groups deploy module - render terraform code"
+        docker run --rm --user 996:993 \
+        --env "JOB_NAME=${JOB_NAME}" \
+        --env "SDLC_ENV=${SDLC_ENV}" \
+        --entrypoint make \
+        -v ${WORKSPACE}/tf_deploy_files:/terraform \
+        ecr.npd.bfsaws.net/plato-terraform:latest -f /plato/Makefile render_classic_security_groups
+    fi
+
+	echo "*************   backend configuration options   ****************"
+	echo "bucket=br-ss-${ACCOUNTENV}-us-east-1-terraform-states"
+	echo "key=${BUSSEG}/${SDLC_ENV}/$BACKEND_PATH/${DEPLOY_MODULE}.state"
+	echo "kms_key_id=$BACKEND_KMS"
+	echo "profile=ss_${ACCOUNTENV}"
+	terraform init \
+	-backend-config="bucket=br-ss-${ACCOUNTENV}-us-east-1-terraform-states" \
+	-backend-config="key=${BUSSEG}/${SDLC_ENV}/$BACKEND_PATH/${DEPLOY_MODULE}.state" \
+	-backend-config="region=us-east-1" \
+	-backend-config="encrypt=true" \
+	-backend-config="kms_key_id=$BACKEND_KMS" \
+	-backend-config="profile=ss_${ACCOUNTENV}" \
+    -backend-config="skip_metadata_api_check=${SKIP_METADATA_API_CHECK}" \
+    -backend-config="dynamodb_table=ss-${ACCOUNTENV}-terraform-state-lock"
+}
+tf_init_dev-repo () {
+    if [[ "${DEPLOY_MODULE}" == "security_groups" ]]; then
+        echo "this is a generated deploy module. unwanted files will be removed to ensure backwards compatibilty"
+        rm -f variables.tf
+        echo "security groups deploy module - pull latest plato docker image"
+        docker pull ecr.npd.bfsaws.net/plato-terraform:latest 
+        echo "security groups deploy module - render terraform code"
+        docker run --rm --user 996:993 \
+        --env "JOB_NAME=${JOB_NAME}" \
+        --env "SDLC_ENV=${SDLC_ENV}" \
+        --entrypoint make \
+        -v ${WORKSPACE}/tf_deploy_files:/terraform \
+        ecr.npd.bfsaws.net/plato-terraform:latest -f /plato/Makefile render_classic_security_groups
+    fi
+
+	echo "*************   backend configuration options   ****************"
+	echo "bucket=br-${BUSSEG}-${SDLC_ENV}-$BACKEND_REGION-terraform-states"
+	echo "key=${BUSSEG}/$BACKEND_REGION/${SDLC_ENV}/$BACKEND_PATH/${DEPLOY_MODULE}.state"
+	
+	echo "kms_key_id=${BACKEND_KMS}"
+	echo "role_arn=arn:aws:iam::${BACKEND_ACCTID}:role/BR_DevTerraform_AssumeUser_Role"
+	terraform init \
+    -backend-config="bucket=br-${BUSSEG}-${SDLC_ENV}-us-east-1-terraform-states" \
+	-backend-config="key=${BUSSEG}/$BACKEND_REGION/${SDLC_ENV}/$BACKEND_PATH/${DEPLOY_MODULE}.state" \
+    -backend-config="dynamodb_table=${BACKEND_ACCTID}-terraform-state-lock" \
+	-backend-config="region=us-east-1" \
+	-backend-config="encrypt=true" \
+	-backend-config="kms_key_id=${BACKEND_KMS}" \
+	-backend-config="role_arn=arn:aws:iam::${BACKEND_ACCTID}:role/BR_DevTerraform_AssumeUser_Role" \
+	-backend-config="session_name=tfstate"
+}
+###################################################################################
+#########                                                         #################
+#########             export Terraform Variables                  #################
+#########                                                         #################
+###################################################################################
+export TF_VAR_account_prefix=${ACCOUNT_PREFIX}
+export TF_VAR_accountenv=${ACCOUNTENV}
+export TF_VAR_busseg=${BUSSEG}
+export TF_VAR_product=${PRODUCT}
+export TF_VAR_env_alias=${ENV_ALIAS}
+#export TF_VAR_sdlcenv=${SDLC_ENV}
+#export TF_VAR_segment=${SEGMENT}
+
+ if [[ "${BUSSEG}" == "ss" ]]; then
+        export TF_VAR_sdlcenv=""
+		export TF_VAR_segment=${SDLC_ENV}
+ else
+        export TF_VAR_sdlcenv=${SDLC_ENV}
+		export TF_VAR_segment=${SEGMENT}
+ fi
+
+
+
+export TF_VAR_sbu=${SBU}
+export TF_VAR_dept=${DEPT}
+export TF_VAR_accountcode=${ACCOUNTCODE}
+export TF_VAR_owner=${OWNER}
+export TF_VAR_serverrole=${SERVERROLE}
+export TF_VAR_project=${PROJECT}
+export TF_VAR_technology=${TECHNOLOGY}
+export TF_VAR_chargecode=${CHARGECODE}
+export TF_VAR_bladelogic_passwd=${BLADELOGIC_PASSWD}
+export TF_VAR_nexus_server_url=${NEXUS_SERVER_URL}
+export TF_VAR_chef_server_url=${CHEF_SERVER_URL}
+export TF_VAR_starting_point_version=$(cat ../_internal/VERSION)
+export TF_VAR_terraform_artifact_version=$(cat ../VERSION)
+export TF_VAR_live_region=${LIVE_REGION}
+#  Find the correct IAM role prefix to use based on inputs
+case "${BUSSEG}" in
+    gto)
+        if [[ "${SDLC_ENV}" == "sbx" ]]; then
+            export TF_VAR_iamroleprefix="ADFS-BR_GTO_Sandbox"
+        else
+            
+            export TF_VAR_iamroleprefix="ADFS-BR_${BUSSEG^^}_${SDLC_ENV^^}"
+            
+        fi
+    ;;
+    ss)
+        if [[ "${ACCOUNTENV}" == "npd" ]]; then
+            export TF_VAR_iamroleprefix="ADFS-BR_NPRD_SS"
+        else
+            export TF_VAR_iamroleprefix="ADFS-BR_PRD_SS"
+        fi
+    ;;
+    audit)
+        export TF_VAR_iamroleprefix="ADFS-BR_AUD-PROD"
+    ;;
+    inn)
+        export TF_VAR_iamroleprefix="Terraform_AM_DEV"
+    ;;
+    *)
+        
+        export TF_VAR_iamroleprefix="ADFS-BR_${BUSSEG^^}_${SDLC_ENV^^}"
+        
+esac
+
+echo "the iam role prefix is ${TF_VAR_iamroleprefix}"
+
+# Setting the Route53 variable based on Region and AccountEnv
+
+export R53_CRITERIA="${ACCOUNTENV}"
+echo "${R53_CRITERIA}"
+case "${R53_CRITERIA}" in
+    npd)
+        export TF_VAR_r53_vpc_us_east_1="vpc-42b5e024"
+        export TF_VAR_r53_vpc_us_west_2="vpc-383c6f41"
+        export TF_VAR_r53_profile="ss_npd"
+        ;;
+    prd)
+        export TF_VAR_r53_vpc_us_east_1="vpc-cc5472aa"
+        export TF_VAR_r53_vpc_us_west_2="vpc-ef226996"
+        export TF_VAR_r53_profile="ss_prd"
+        ;;
+    *)
+    echo "something went wrong in case statement for route53 profile selection"
+esac
+####################################################
+#  Setting the Terraform version for use in this job
+echo "Installing Terraform version ${TF_VERSION}"
+
+tfenv list
+export TFLIST=$(tfenv list)
+if [[ "${TF_VERSION}" != *"${TFLIST}"* ]]; then
+    tfenv install ${TF_VERSION}
+    echo "Installing Terraform version ${TF_VERSION}"
+fi
+
+echo ${TF_VERSION} > .terraform-version
+
+export tf_major_version=$(echo ${TF_VERSION} | cut -d "." -f 2)
+echo ${tf_major_version}
+case "${tf_major_version}" in
+    11)
+        export SKIP_METADATA_API_CHECK="true"
+        echo "SKIP_METADATA_API_CHECK=${SKIP_METADATA_API_CHECK}"
+        ;;
+    12)
+        export SKIP_METADATA_API_CHECK="true"
+        echo "SKIP_METADATA_API_CHECK=${SKIP_METADATA_API_CHECK}"
+        ;;
+    *)
+        export SKIP_METADATA_API_CHECK="false"
+        echo "SKIP_METADATA_API_CHECK=${SKIP_METADATA_API_CHECK}"
+esac
+###################################################################################
+# Run the functions based on whether it is a dev repo deploy or not
+
+if [[  "${TF_NEXUS_REPO}" == "CSG" ]]; then
+  tf_init
+else
+  tf_init_dev-repo
+fi
+
+
+###################################################################################
+###################################################################################
+echo "*****************************"
+echo "you are performing a ${TF_COMMAND}"
+echo "*****************************"
+
+terraform --version
+export tf_first_version=$(echo ${TF_VERSION} | cut -d "." -f 1)
+echo ${tf_first_version}
+export TFVAR=${SDLC_ENV}.tfvars
+echo "${TFVAR}"
+
+export TF_WARN_OUTPUT_ERRORS=1
+if [[ ${TF_COMMAND} = "output" ]]; then
+	terraform output -json
+	exit
+elif [[ ${TF_COMMAND} = "plan" ]]; then
+	terraform get -update
+	terraform plan -var-file ${TFVAR}
+elif [[ ${TF_COMMAND} = "apply" ]]; then
+	terraform get -update
+	terraform apply -auto-approve -var-file ${TFVAR}
+elif [[ ${TF_COMMAND} = "destroy" ]]; then
+	terraform get -update
+	if [[ ${tf_major_version} -ge 15 ]] || [[ ${tf_first_version} -ge 1 ]]; then
+        terraform destroy -auto-approve -var-file ${TFVAR}
+    else
+        terraform destroy -force -var-file ${TFVAR}
+    fi
+elif [[ ${TF_COMMAND} = "plan_destroy" ]]; then
+	terraform get -update
+	terraform plan -destroy -var-file ${TFVAR}
+elif [[ ${TF_COMMAND} = "graph" ]]; then
+	terraform get -update
+	terraform graph
+elif [[ ${TF_COMMAND} = "refresh" ]]; then
+	terraform get -update
+	terraform refresh -var-file ${TFVAR}
+elif [[ ${TF_COMMAND} = "show" ]]; then
+	terraform get -update
+	terraform show
+else
+	echo "your first variable needs to be plan, apply, output, or destroy"
+fi
