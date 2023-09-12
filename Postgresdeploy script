@@ -1,0 +1,69 @@
+#!/bin/bash
+
+
+DB_USER=$1
+DB_PASSWORD=$2
+DB_PORT=$3
+DB_NAME=$4
+ENV=$5
+
+LOG_FILE="script_log_$DB_NAME.txt"
+
+exec &>> "$LOG_FILE"
+
+echo $hostname
+
+if [ "$ENV" = "dev" ]; then
+	HOST_IP="10.26.35.99"
+	HOST_Name="BGCCLVFISQLD1"
+elif [ "$ENV" = "int" ]; then
+	HOST_IP="10.26.35.99"
+	HOST_Name="BGCCLVFISQLD1"
+elif [ "$ENV" = "qa" ]; then
+	HOST_IP="10.26.35.104"
+	HOST_Name="BGCCLVFISQLU1"
+elif [ "$ENV" = "uat" ]; then
+	HOST_IP="10.26.35.104"
+	HOST_Name="BGCCLVFISQLU1"
+elif [ "$ENV" = "prd" ]; then
+	HOST_IP="10.24.48.64"
+	HOST_Name="BGCCLVFISQLP1"
+else
+	echo 'Invalid environment value provided for SDLC'
+	exit 10
+fi
+
+#echo "Postgres Deployment will be on ${ENV} on Node ${HOST_Name} with ip ${HOST_IP}"
+#echo "user is $DB_USER"
+#echo " Password is $DB_PASSWORD "
+#echo " Port Number is $DB_PORT"
+#echo "Database name is $DB_NAME "
+
+# Function to execute sql files in a directory
+
+execute_sql_files() {
+echo 
+	local directory="$1"
+	for sql_file in "$directory"/*.sql; do
+		if [[ -f $sql_file ]];then
+			echo "Deploying SQL file: ${sql_file} ....."
+			psql -U ${DB_USER} -h ${HOST_IP} -p ${DB_PORT} -d ${DB_NAME} -f "$sql_file" >> "$LOG_FILE"
+		fi
+	done
+}
+
+directories=( 
+	"Schemas"
+	"Inserts"
+	)
+
+# Loop through directories and execute sql files
+
+for dir in "${directories[@]}"
+do
+	execute_sql_files "$dir"
+	echo "Deployment completed successfully for Directory: $dir"
+done
+echo
+echo
+echo "deployment is successfully completed"
