@@ -1,0 +1,1122 @@
+#!/bin/ksh
+# set -x
+#************************************************************************
+#
+# Location: /sys_adm/post_check
+#
+# Author: Debiprosad Palit
+#
+# Date Written: 07/19/2013
+# v1
+#
+# Modification date:
+#
+#
+# Modified By: Eric Stewart
+# v39 04/08/2015 exclude router because it comes and goes.
+# V40 07/06/2015 add info for strmqcsv.sh
+# V40 07/06/2015 add Linux check for chkconfig for difference b4 and after
+# V41 07/26/2015 add database check
+# V41 07/26/2015 add root check specific
+# V41 07/26/2015 add new log.1 added
+# V41 07/26/2015 add new samgr directory
+# v42 08/22/2015 checked from grep to cat to check cron info
+# v42 08/22/2015 checked output from lltstat -nvv active for down messages
+# v42 08/22/2015 select srm directory to use
+# v43 09/01/2015 add rlogin check to disable all the time
+# v43 09/15/2015 changed dataservers field from 9 to 8
+# v43 09/18/2015 added sort to chkconfig on Linux servers
+# v43 09/23/2015 added remove lines with "process not running" from ITM output
+# v44 09/25/2015 added year to cron expired commands
+# v44 09/25/2015 added info for individual ITM process to restart
+# V45 10/09/2015 SRM can have 2 process or 3 processes so we will chnage check to 2
+# V46 12/08/2015 add commands to keep date of database master
+# V47 12/08/2015 add commands to keep date of chkconfig master
+# V48 12/20/2015 correct comment from install to installp
+# V48 01/04/2015 add auditd to be disabled
+# V49 01/15/2015 commented out checks for SEA
+# V50 03/08/2016 added SCOM check
+# V50 03/08/2016 removed srm checks
+# V50 04/08/2016 removed 3 services from being checked:  per gunter
+# V51 04/17/2016 fixed scom check on Linux
+# V51 04/17/2016 removed ITM checking
+# V51 04/17/2016 add check for zone when checking gateway
+# svc:/network/rpc/cde-ttdbserver:tcp needs to be disabled
+# svc:/network/nfs/rquota:default needs to be disabled
+# svc:/network/rpc-100235_1/rpc_ticotsord:default needs to be disabled
+
+VERSION=v51
+#***************************************************************************
+#
+#
+#****************************************************************************************************************************
+
+USER=`id | cut -f2 -d"("|cut -f1 -d")"`
+if [ "$USER" != "root" ]
+then
+        echo must be run as root or sudo
+        exit
+fi
+M=/sys_adm/master.dir
+mkdir -p $M
+#****************************************************************************************************************************
+if [ "$1" = "-v" ] || [ "$1" = "-V" ]
+then
+        echo version is $VERSION
+        exit
+fi
+# get directory of dspmq
+        if [ -r /usr/bin/dspmq ]
+        then
+                DSPMQ_DIR=/usr/bin
+        fi
+        if [ -r /opt/mqm/bin/dspmq ]
+        then
+                DSPMQ_DIR=/opt/mqm/bin
+        fi
+if [ "$1" = "initialchkconfig" ] &&  [ "`uname -s`" = "Linux" ]
+then
+                /sbin/chkconfig --list | sort  >  $M/chkconfig.master
+                exit
+fi
+if [ "$1" = "initialnetstat" ]
+then
+                netstat -rn |awk '{print $1, $2, $3, $6}' > $M/netstat.master
+                exit
+fi
+if [ "$1" = "initialservices" ]
+then
+                svcs -a |grep -v legacy |awk '{print $1, $3}' | sort -d > $M/services.master
+                exit
+fi
+if [ "$1" = "initial" ]
+then
+        if [ -e /etc/dfs/sharetab ]
+        then
+                cp /etc/dfs/sharetab $M/sharetab.master
+        fi
+
+        netstat -rn |awk '{print $1, $2, $3, $6}' > $M/netstat.master
+        if [ "`uname -s`" = "SunOS" ]
+        then
+                svcs -a |grep -v legacy |awk '{print $1, $3}' | sort -d > $M/services.master
+        fi
+        if [ "`uname -s`" = "SunOS" ]
+        then
+                df -k |egrep -v "/dev/odm|/dev/vx/dmp|/dev/vx/rdmp|/cdrom" | awk 'NR!=1{print $6}' > $M/df-k.master
+        else
+                df -k -P|egrep -v "/dev/odm|/dev/vx/dmp|/dev/vx/rdmp|/cdrom" | awk 'NR!=1{print $6}' > $M/df-k.master
+        fi
+        if [ -r $DSPMQ_DIR/dspmq ]
+        then
+                $DSPMQ_DIR/dspmq | grep Running |sort -d  > $M/dspmq.master
+        fi
+        ls -l /usr/bin/zonename>/dev/null 2>&1
+        RET2=$?
+        ls -l /opt/VRTSvcs/bin/hastatus>/dev/null 2>&1
+        RET1=$?
+        # if there is no hastatus then the master file is empty
+        if [ $RET1 -ne 0 ]
+        then
+                echo "" > $M/hastatus.master
+        fi
+        # if there is hastatus and zonename then we need to check if it is a global
+        if [ $RET1 -eq 0 ] && [ $RET2 -eq 0 ] && [ "`/usr/bin/zonename`" = "global" ]
+        then
+                /opt/VRTSvcs/bin/hastatus -summ | egrep 'ONLINE|OFFLINE' > $M/hastatus.master
+        fi
+        # if there is hastatus and zonename then we need to check if it is a container
+        if [ $RET1 -eq 0 ] && [ $RET2 -eq 0 ] && [ ! "`/usr/bin/zonename`" = "global" ]
+        then
+                                echo "" > $M/hastatus.master
+        fi
+        if [ $RET1 -eq 0 ] && [ $RET2 -ne 0 ]
+        then
+                /opt/VRTSvcs/bin/hastatus -summ | egrep 'ONLINE|OFFLINE' > $M/hastatus.master
+        fi
+        ps -aef| grep "tws.*bin"| egrep -v "router|taskLauncher|zcentric|defunct|grep|jobmanrc " | cut -f2- -d"/"|awk '{print $1}' | sort -d -u > $M/tws.master
+        ps -aef| egrep "cdstatm|cdpmgr" | egrep -v "defunct|grep" |sed 's# pts/# pts#' | cut -f2- -d"/" | awk '{print $1}' | sort -d -u > $M/ndm.master
+        if [ "`uname -s`" = "Linux" ]
+        then
+                /sbin/chkconfig --list| sort   >  $M/chkconfig.master
+                exit
+        fi
+        exit
+fi
+if [ "`uname -s`" = "SunOS" ] && [ "`/usr/bin/zonename`" = "global" ]
+then
+        CHECKMPxIO=`grep "^mpxio-disable" /kernel/drv/fp.conf | cut -d "=" -f 2 |
+                                cut -d '"' -f 2`
+        if [ "$CHECKMPxIO" == "no" ];then
+                if [ "`uname -n`" = "brcoljs01" ] || [ "`uname -n`" = "brpokjs01" ]; then
+                        continue
+                else
+                        echo mpxio-disable is set to no. notify UNIX team via email.
+                        echo This server may need to have the /kernel/drv/fp.conf checked
+                        echo mpxio-disable is ok on brcoljs01 and brpokjs01
+                fi
+        fi
+fi
+
+for i in ndm netstat df-k tws dspmq services
+do
+        if [ ! -r $M/$i.master ]
+        then
+                touch $M/$i.master
+        fi
+done
+
+echo $VERSION " " `uname -n` `cat /.loc` `date` " hostid " `hostid`
+if [ "`uname -s`" = "Linux" ]
+then
+        echo "root " `/usr/bin/chage -l root | grep -i "^Password Expires" `
+fi
+#
+#
+if [ "`uname -s`" = "AIX" ]
+then
+        df -k -P |egrep -v "/dev/odm|/dev/vx/dmp|/dev/vx/rdmp|/cdrom" | awk 'NR!=1{print $6}' > /tmp/df-k.output
+fi
+if [ "`uname -s`" = "Linux" ]
+then
+        df -k -P |egrep -v "/dev/odm|/dev/vx/dmp|/dev/vx/rdmp|/cdrom" | awk 'NR!=1{print $6}' > /tmp/df-k.output
+fi
+if [ "`uname -s`" = "SunOS" ]
+then
+        df -k |egrep -v "/dev/odm|/dev/vx/dmp|/dev/vx/rdmp|/cdrom" | awk 'NR!=1{print $6}' > /tmp/df-k.output
+fi
+cd /tmp
+cat $M/df-k.master /tmp/df-k.output | sort -d | uniq -u > /tmp/test3
+if [ `cat /tmp/test3|wc -l` -gt 0 ]
+then
+        # then missmatch - Lets determine where they are
+        # if they are in the new df then initial needs to be run again
+        for i in `cat /tmp/test3`
+        do
+                if [ `grep -c "${i}$" /tmp/df-k.output` -gt 0 ]
+                then
+                        echo "File System is New   " $i
+                        DF=no
+                else
+                        echo "File System Missing " $i
+                        DF=yes
+                fi
+        done
+        if [ $DF = "yes" ]
+        then
+                echo "         for /net file systems. cd to that directory and run post_check again         "
+                echo "         /net file systems are usually automounted.                               "
+                echo "         "
+                echo "         for NFS you may need to rmdir /fs; mkdir /fs;  mount -F nfs server:/fs /fs   "
+                echo "         or cd to directories for automount to mount them "
+                echo "         may also need to unshareall and shareall on the NFS originating server "
+        fi
+else
+        echo " All Filesystems are OK "
+        rm /tmp/test3 /tmp/df-k.output
+fi
+
+netstat -rn |awk '{print $1, $2, $3, $6}' > /tmp/netstat.output
+cat $M/netstat.master /tmp/netstat.output | sort -d | uniq -u > /tmp/test3
+if [ `cat /tmp/test3|wc -l` -gt 0 ]
+then
+        echo " The following routes are different:         "
+        echo " A lot of them will be if run in POK on containers "
+        echo " If the network is fine you can run ./post_check initialnetstat "
+        echo "             to reset the master netstat file"
+        echo " then run post_check again "
+        echo " "
+        cat /tmp/test3
+        rm /tmp/test3
+else
+        echo " All Routes are OK "
+        rm /tmp/test3 /tmp/netstat.output
+fi
+
+ls -l /usr/bin/zonename>/dev/null 2>&1
+RET2=$?
+ls -l /opt/VRTSvcs/bin/hastatus>/dev/null 2>&1
+RET1=$?
+if [ $RET1 -ne 0 ]
+then
+        echo " No hastatus on this server "
+else
+    if [ $RET1 -eq 0 ] && [ $RET2 -eq 0 ] && [ ! "`/usr/bin/zonename`" = "global" ]
+    then
+        echo " No hastatus on this server "
+    else
+        if [ $RET1 -eq 0 ]
+        then
+                /opt/VRTSvcs/bin/hastatus -summ | egrep 'ONLINE|OFFLINE' > /tmp/hastatus.output
+                cat $M/hastatus.master /tmp/hastatus.output | sort -d | uniq -u >> /tmp/test3
+                if [ `cat /tmp/test3|wc -l` -gt 0 ]
+                then
+                        echo " These hastatus is not correct. Please manually verify "
+                        cat /tmp/test3
+                        rm /tmp/test3
+                else
+                        echo " All Hastatus lines are OK                   "
+                        rm /tmp/hastatus.output
+                fi
+                CNT=`/opt/VRTS/bin/lltstat -nvv active| grep -i down|wc -l`
+                if [ $CNT -gt 0 ]
+                then
+                        echo "There is a down item Please notify UNIX SA"
+                        echo "/opt/VRTS/bin/lltstat -nvv active"
+                        /opt/VRTS/bin/lltstat -nvv active
+                fi
+        fi
+    fi
+fi
+
+if [ ! -r /opt/microsoft/scx/bin/tools/scxadmin ]
+then
+    echo SCOM not installed
+    elif [ "`uname -s`" = "SunOS" ]
+    then
+        CNT=`svcs -a |grep online | grep -c scx-cimd`
+        if [ $CNT -ne 1 ]
+        then
+                echo "SCOM is not active <----------------------"
+                echo Try to run sudo svcadm enable scx-cimd
+        fi
+        CNT=`/opt/microsoft/scx/bin/tools/scxadmin -status|grep -c stopped`
+        if [ $CNT -gt 0 ]
+        then
+                echo "SCOM problems see below messages <-------------"
+                /opt/microsoft/scx/bin/tools/scxadmin -status
+                echo " If SCOM is in Maintenance Mode this message will come up. It may take 5 min after coming out of MaintMode"
+                echo "try running sudo /opt/microsoft/scx/bin/tools/scxadmin -start all"
+                echo if it still shows omiagent: is stopped. SCOM may not have been configured.
+                echo notify the SCOM group.
+        fi
+    else
+         CNT=`/opt/microsoft/scx/bin/tools/scxadmin -status|grep -c stopped`
+        if [ $CNT -gt 0 ]
+        then
+                echo "SCOM problems see below messages <-------------"
+                /opt/microsoft/scx/bin/tools/scxadmin -status
+                echo " If SCOM is in Maintenance Mode this message will come up. It may take 5 min after coming out of MaintMode"
+                echo "try running sudo /opt/microsoft/scx/bin/tools/scxadmin -start all"
+                echo if it still shows omiagent: is stopped. SCOM may not have been configured.
+                echo notify the SCOM group.
+        fi
+
+    fi
+if [ ! -r $DSPMQ_DIR/dspmq ]
+then
+        echo " No MQ on this server "
+else
+        $DSPMQ_DIR/dspmq | grep Running |sort -d > /tmp/dspmq.output
+        cat $M/dspmq.master /tmp/dspmq.output | sort -d | uniq -u > /tmp/test3
+        if [ `cat /tmp/test3|wc -l` -gt 0 ]
+        then
+                if [ `$DSPMQ_DIR/dspmq| grep -v Running | wc -l` -eq 0 ]
+                then
+                        echo " These MQ managers are new "
+                        comm -13 $M/dspmq.master /tmp/dspmq.output
+                        echo " These MQ managers are missing "
+                        comm -23 $M/dspmq.master /tmp/dspmq.output
+                else
+                        echo " These MQ managers are not Running          "
+                        $DSPMQ_DIR/dspmq| grep -v Running
+                        rm /tmp/test3
+                fi
+        else
+                echo " All MQ managers are OK "
+                rm /tmp/test3
+        fi
+    DSP_RUNNING=`$DSPMQ_DIR/dspmq|grep -i running | cut -f2 -d"("|cut -f1 -d")"|wc -l`
+    if [ $DSP_RUNNING -gt 0 ]
+    then
+        for i in `$DSPMQ_DIR/dspmq|grep -i running | cut -f2 -d"("|cut -f1 -d")"`
+        do
+            CNT=`$DSPMQ_DIR/dspmqcsv $i| grep -c Running`
+            if [ $CNT -lt 1 ]
+            then
+                echo $i `$DSPMQ_DIR/dspmqcsv $i`
+                echo "    run sudo /sys_adm/start_stop/strmqcsv.sh $i and then "
+                echo "    check with sudo /sys_adm/start_stop/dspmqcsv.sh $i"
+                GOOD=n
+            fi
+        done
+        if [ "$GOOD" = "y" ]
+        then
+            echo all MQ command servers are running
+        fi
+    fi
+fi
+
+CNT=`grep "^ndm:" /etc/passwd|wc -l`
+if [ $CNT -eq 0 ]
+then
+        echo " No NDM on this server "
+else
+        ps -aef| egrep "cdstatm|cdpmgr" | egrep -v "defunct|grep" |sed 's# pts/# pts#'| cut -f2- -d"/" | awk '{print $1}' | sort -d -u > /tmp/ndm.output
+        cat $M/ndm.master /tmp/ndm.output | sort -d | uniq -u > /tmp/test3
+        if [ `cat /tmp/test3|wc -l` -gt 0 ]
+        # then missmatch - Lets determine where they are
+        # if they are in the new ndm then initial needs to be run again
+        then
+                for i in `cat /tmp/test3`
+                do
+                        if [ `grep -c "${i}" /tmp/ndm.output` -gt 0 ]
+                        then
+                                echo "NDM processes are New   " $i
+                        else
+                                echo "NDM processes are Missing " $i
+                        fi
+                done
+        else
+                echo " All NDM processes are OK "
+                rm /tmp/test3
+        fi
+fi
+CNT=`grep "^tws" /etc/passwd|wc -l`
+if [ $CNT -eq 0 ]
+then
+        echo " No TWS on this server "
+else
+        ps -aef| grep "tws.*bin"| egrep -v "router|taskLauncher|zcentric|defunct|grep|jobmanrc " | cut -f2- -d"/" | awk '{print $1}' | sort -d -u > /tmp/tws.output
+
+        cat $M/tws.master /tmp/tws.output | sort -d | uniq -u > /tmp/test3
+        if [ `cat /tmp/test3|wc -l` -gt 0 ]
+        then
+                echo " These TWS processes are not Running          "
+                cat /tmp/test3
+                rm /tmp/test3
+        else
+                echo " All TWS processes are OK "
+                rm /tmp/test3
+        fi
+fi
+# lets check the backup interface is working - It will only work on global zones
+if [ "`uname -s`" = "SunOS" ] && [ ! "`/usr/bin/zonename`" = 'global' ]
+then
+        # containers do not have LINKs information or backup info
+                echo " No backup for zones"
+                echo " No LINKs  for zones"
+fi
+if [ "`uname -s`" = "SunOS" ] && [ "`/usr/bin/zonename`" = "global" ]
+then
+   # lets check the links
+   if [ `/usr/sbin/dladm show-dev| grep -c "link: down"` -gt 0 ]
+   then
+        echo " Some links are down"
+        /usr/sbin/dladm show-dev| grep "link: down"
+    else
+        echo " All Links are UP"
+    fi
+fi
+
+# if it not Solaris or not a container then check backups
+if [ ! "`uname -s`" = "SunOS" ] || [ "`/usr/bin/zonename`" = "global" ]
+then
+        ls -ld /usr/bin/dsmc >/dev/null 2>&1
+        RET3=$?
+        if [ $RET3 -eq 0 ]
+        then
+                /usr/bin/dsmc q backup /etc/motd > /dev/null
+                RET4=$?
+                if [ $RET4 -eq 0 ] || [ $RET4 -eq 8 ]
+                then
+                        echo " Backup connection OK "
+                else
+                        echo " Backup connection FAILED"
+                fi
+        else
+                echo " Backup software not installed "
+        fi
+fi
+# if [ "`uname -s`" = "SunOS" ]
+# then
+        # shareall
+# fi
+rm -rf /tmp/test3
+################################################################
+# lets check the /etc/dfs/sharetab to see if we need to do a shareall
+
+        if [ -e /etc/dfs/sharetab ]
+        then
+                CNT1=`cat /etc/dfs/sharetab|wc -l`
+                CNT2=`cat $M/sharetab.master|wc -l`
+                if [ $CNT1 -ne $CNT2 ]
+                then
+                        echo "   Please do a shareall and then check again. "
+                        echo "   The sharetab before does not match the sharetab after."
+                fi
+        fi
+
+# check permissions of /tmp
+if [ "`ls -ld /tmp|awk '{print $1}'`" = "drwxrwxrwt" ] || [ "`ls -ld /tmp|awk '{print $1}'`" = "drwxrwxrwt." ]
+then
+        continue
+else
+        echo ' CRITICAL change permissions on /tmp with sudo chmod 1777 /tmp '
+fi
+# added check for maintenance modes and old boot environments
+if [ "`uname -s`" = "SunOS" ]
+then
+        svcs -a | grep maintenance
+        CNT=`svcs -a| grep -c "online.*svc:/system/auditd:default" `
+        if [ $CNT -eq 1 ]
+        then
+                echo "svc:/system/auditd:default needs to be disabled "
+        fi
+        CNT=`svcs -a| grep -c "online.*svc:/network/login:rlogin" `
+        if [ $CNT -eq 1 ]
+        then
+                echo "svc:/network/login:rlogin needs to be disabled "
+        fi
+        if [ -r /usr/sbin/lustatus ]
+        then
+                CNT=`/usr/sbin/lustatus 2>/dev/null | awk '{print $5}'|grep -c "yes"`
+                if [ $CNT -gt 0 ]
+                then
+                        echo old boot environmants can be removed. for info only
+                        echo usually cleanup in 1 week
+                        /usr/sbin/lustatus
+                        echo " "
+                        echo " notify UNIX during normal business hours"
+                        echo " use ludelete BE to remove an old Boot Environment"
+                        echo " "
+                fi
+        fi
+
+fi
+
+if [ -e $M/master.ora.database.processes ]
+then
+        # save date/time stamp so we can restore it to the file after sorting
+        touch -r $M/master.ora.database.processes $M/reference
+        sort -u $M/master.ora.database.processes -o $M/master.ora.database.processes
+        # restore date time stamp
+        touch -r $M/reference $M/master.ora.database.processes
+        while read line; do
+        if [ "$line" != "" ]
+        then
+                CNT=`ps -ef |grep $line |grep -v grep| wc -l`
+                if [ $CNT -lt 1 ]
+                then
+                        echo DataBase process not running $line
+                fi
+        fi
+        done < $M/master.ora.database.processes
+fi
+if [ -e $M/master.database.processes ]
+then
+        # save date/time stamp so we can restore it to the file after sorting
+        touch -r $M/master.database.processes $M/reference
+        sort -u $M/master.database.processes -o $M/master.database.processes
+        # restore date time stamp
+        touch -r $M/reference $M/master.database.processes
+        while read line; do
+        if [ "$line" != "" ]
+        then
+                CNT=`ps -ef |grep $line |grep -v grep| wc -l`
+                if [ $CNT -lt 1 ]
+                then
+                        echo DataBase process not running $line
+                fi
+        fi
+        done < $M/master.database.processes
+fi
+# lets see if the backupserver and dataserver are in the database
+if [ "`uname -s`" = "Linux" ]
+then
+    for PROCESS in `ps -aef| egrep "backupserver|dataserver"|grep -v grep | awk '{print $8}'`
+    do
+        grep $PROCESS $M/master.database.processes > /dev/null 2>&1
+        if [ $? -ne 0 ]
+        then
+                echo $PROCESS is not in the $M/master.database.processes file
+                echo Please verify and add if needed
+        fi
+    done
+    for PROCESS in `ps -aef | grep "ora_pmon"|grep -v grep | awk '{print $9}'`
+    do
+        grep $PROCESS $M/master.ora.database.processes > /dev/null 2>&1
+        if [ $? -ne 0 ]
+        then
+                echo $PROCESS is not in the $M/master.ora.database.processes file
+                echo Please verify and add if needed
+        fi
+    done
+else
+    for PROCESS in `ps -aef -o args| egrep "backupserver|dataserver"|grep -v grep | awk '{print $1}'`
+    do
+        grep $PROCESS $M/master.database.processes > /dev/null 2>&1
+        if [ $? -ne 0 ]
+        then
+                echo $PROCESS is not in the $M/master.database.processes file
+                echo Please verify and add if needed
+        fi
+    done
+    for PROCESS in `ps -aef -o args | grep "ora_pmon"|grep -v grep | awk '{print $1}'`
+    do
+        grep $PROCESS $M/master.ora.database.processes > /dev/null 2>&1
+        if [ $? -ne 0 ]
+        then
+                echo $PROCESS is not in the $M/master.ora.database.processes file
+                echo Please verify and add if needed
+        fi
+    done
+fi
+
+
+
+# check for tectia running
+CNT=`ps -aef| grep '/opt/tectia/sbin/ssh-server-g3'| grep -v grep |wc -l`
+if [ $CNT -lt 1 ]
+then
+        if [ "`uname -n`" = "gpsprod4" ] || [ "`uname -n`" = "gpsp4" ] ||
+           [ "`uname -n`" = "gpsprod3a" ] || [ "`uname -n`" = "gpsprod3" ] || [ "`uname -n`" = "gpsp3" ] ||
+           [ "`uname -n`" = "gpsprod2" ] || [ "`uname -n`" = "gpsp2" ] ||
+           [ "`uname -n`" = "csprod1" ] || [ "`uname -n`" = "csqa1" ] ||
+           [ "`uname -n`" = "gpsq1" ] || [ "`uname -n`" = "gpsq2" ] ||
+           [ "`uname -n`" = "sunqa1" ] || [ "`uname -n`" = "gpsqa2" ] ||
+           [ "`uname -n`" = "mbsep2" ] || [ "`uname -n`" = "lhprod1" ] ||
+           [ "`uname -n`" = "bpsftpd2" ] || [ "`uname -n`" = "bpsftpp1" ] ||
+           [ "`uname -n`" = "bpsftpp2" ] || [ "`uname -n`" = "bpsftpq1" ] || [ "`uname -n`" = "bpsftpq2" ] ||
+           [ "`uname -n`" = "cosftpd1" ]
+
+        then
+                echo tectia needs to be started on this server or the container
+                echo /etc/init.d/*g3 start
+        fi
+fi
+
+CNT=`ls -l /etc/init.d/tebctl* 2>/dev/null| wc -l `
+if [ $CNT -gt 0 ]
+then
+    cd /etc/init.d
+    for i in `ls tebctl*| cut -d"_" -f4`
+    do
+        # Lets check for the 2 processes
+        AGENT=`ps -aef| egrep "$i.*TWS/ITA/cpa/ita/agent|$i.*TWS/ITA/bin/ita.ini" | grep -v grep | wc -l `
+        JOB=`ps -aef| grep "$i.*TWS/bin/JobManager" | grep -v grep | wc -l `
+        # gpsq2: zcentric 11716     1   0   Dec 21 ?           0:00 /tools/tws//TWS/ITA/cpa/ita/agent
+        # gpsq2: zcentric 11906 11716   0   Dec 21 ?           5:43 /tools/tws/TWS/bin/JobManager
+        if [ $AGENT -ne 1 ]
+        then
+                echo ZCENTRIC $i agent missing - contact the TWS group
+                echo unless this is a failover server
+        fi
+        if [ $JOB -ne 1 ]
+        then
+                echo ZCENTRIC $i JobManager missing - contact the TWS group
+                echo unless this is a failover server
+        fi
+        if [ $AGENT -eq 1 ] && [ $JOB -eq 1 ]
+        then
+                echo " ZCENTRIC $i OK "
+        fi
+    done
+fi
+# lets check for sudba04 that we can ping the customers ip address
+if [ "`uname -n|cut -c1-7`" = "sudba04" ]
+then
+        echo " doing ping test - please wait 1 minute before CTRL-C"
+        CNT=`/usr/sbin/ping 149.83.28.221 | grep alive |wc -l`
+        if [ $CNT -eq 1 ]
+        then
+                echo "SUDBA04 is the primary server"
+        else
+                echo "SUDBA04 ping test failed. If this is primary server run /sys_adm/make_sudba04_prod"
+        fi
+fi
+
+
+# Ping test to default gateway
+if [ "`uname -s`" = "Linux" ]
+then
+gateway=`/sbin/ip route | awk '/default/ { print $3 }'`
+count=$( ping -c 1 $gateway | grep icmp* | wc -l )
+if [ $count -eq 0 ]
+then
+
+    echo " Server Unable to ping the Gateway."
+
+else
+
+    echo " Server Able to ping the Gateway."
+
+fi
+fi
+
+if [ "`uname -s`" = "SunOS" ] && [ "`/usr/bin/zonename`" = "global" ]
+
+then
+gateway=`cat /etc/defaultrouter|grep -v "^#"`
+        CNT=`/usr/sbin/ping $gateway | grep alive |wc -l`
+        if [ $CNT -eq 1 ]
+        then
+                  echo "Server able to ping the Gateway."
+        else
+                 echo "Server unable to ping the Gateway."
+        fi
+fi
+
+# lets check for tarot port 23 commented out in /etc/services
+if [ "`uname -n|cut -c1-5`" = "tarot" ]
+then
+        CNT=`grep "^telnet.*23/tcp" /etc/services|wc -l`
+        if [ $CNT -eq 1 ]
+        then
+                echo "comment out telnet port 23 on tarot servers in /etc/services"
+        fi
+fi
+
+if [ "`uname -s`" = "Linux" ]
+then
+        /sbin/chkconfig --list | sort  >  /tmp/test3
+        # save date/time stamp so we can restore it to the file after sorting
+        touch -r $M/chkconfig.master              $M/reference
+        sort $M/chkconfig.master -o $M/chkconfig.master
+        # restore date time stamp
+        touch -r $M/reference $M/chkconfig.master
+
+        CNT=`comm -3 /tmp/test3 $M/chkconfig.master| wc -l`
+        if [ $CNT -eq 0 ]
+        then
+                echo " Linux chkconfig OK"
+        else
+                echo " Linux chkconfig items that are different "
+                sort $M/chkconfig.master -o $M/chkconfig.master
+
+                comm -3 /tmp/test3 $M/chkconfig.master
+        fi
+fi
+
+if [ "`uname -s`" = "SunOS" ]
+then
+        svcs -a |grep -v legacy | awk '{print $1, $3}' | sort -d > /tmp/test3
+        CNT=`comm -3 /tmp/test3 $M/services.master| wc -l`
+        if [ $CNT -eq 0 ]
+        then
+                echo " Services OK"
+        else
+                echo " Services that are different "
+                comm -3 /tmp/test3 $M/services.master
+        fi
+# check for password expired messages
+        MON=`date '+%b'`
+        D=`date '+%e'`
+        Y=`date '+%y'`
+        CNT=`cat /var/cron/* |grep "password has expired" 2>/dev/null | grep $MON | grep " $D " |grep " %Y " | sort | tail -1 | wc -l`
+        if [ $CNT -gt 0 ]
+        then
+            CNTROOT=`cat /var/cron/*|grep  "password has expired" 2>/dev/null | grep $MON | grep " $D " | grep " %Y "| grep root | sort | tail -1 | wc -l`
+            if [ $CNTROOT -gt 0 ]
+            then
+                echo "*****************************************************"
+                echo "root password has expired"
+                echo " Notify UNIX SA "
+                echo "*****************************************************"
+            else
+                echo "*****************************************************"
+                echo "password has expired "
+                cat /var/cron/* |grep "password has expired" 2>/dev/null | grep $MON | grep " $D " |grep " %Y " | sort | tail -1
+                echo " Notify UNIX SA via email"
+                echo "*****************************************************"
+            fi
+        fi
+        CNT=`cat /var/cron/* | grep "c queue max run limit reached" 2>/dev/null| grep $MON | grep " $D " | grep " %Y " |sort | tail -1 | wc -l`
+        if [ $CNT -gt 0 ]
+        then
+                echo "*****************************************************"
+                echo " c queue max run limit reached"
+                cat /var/cron/* | grep "c queue max run limit reached" 2>/dev/null| grep $MON | grep " $D " | grep " %Y " |sort | tail -1
+                echo " Notify UNIX SA via email only "
+                echo "*****************************************************"
+        fi
+
+
+fi
+if [ "`uname -s`" = "AIX" ]
+then
+        CNT=`lsvg -l rootvg|grep bos_inst|wc -l`
+        if [ $CNT -gt 0 ]
+        then
+                lsvg -l rootvg| grep bos_inst
+                echo " "
+                echo "run sudo multibos -R to clean up old bos environments"
+                echo " "
+        fi
+        # run installp -s to see if we have updates that need to be committed or rejected
+        CNT=`installp -s 2>&1|grep "installp:  No filesets were found in the Software"|wc -l`
+        if [ $CNT -ne 1 ]
+        then
+                echo " Notify UNIX that there are updates that may need to be committed"
+                echo " This can be done via email. It is informational only"
+        fi
+fi
+
+
+# if it is Solaris and it is a global zone check with NFS mounts and ask user to check
+if [ "`uname -s`" = "SunOS" ] && [ "`/usr/bin/zonename`" = "global" ]
+then
+        DFSCNT=`cat /etc/dfs/dfstab | grep "^share.*rw=" | wc -l `
+        if [ $DFSCNT -gt 0 ]
+        then
+                echo " "
+                echo "PLEASE LOG INTO SERVERS LISTED BELOW AND "
+                echo "     CHECK THAT THE NFS SHARE IS MOUNTED AND NOT IN ERROR "
+                echo "     AFTER MAINTENANCE CHANGES                            "
+                echo " "
+                cat /etc/dfs/dfstab | grep "^share.*rw="
+                echo " "
+                echo " "
+        fi
+fi
+rm -rf $M/reference
+# VERSION
+echo " SAN Check - This may take a few minutes on systems with lots of luns"
+##########################################################################
+# Function: Check storage path status of ESM,HDS,SDD, MPIO, Veritas
+# OS Types: AIX, HP-UX, SunOS, Linux
+#
+#########################################################################
+# Version 13
+#########################################################################
+# status
+# 0 = multi-path software found - no errors.
+# 1 = multi-path software found with errors - check system.
+# 2 = multi-path software found with errors, lspath also has errors.
+# 3 = lspath found with errors.
+# 20 = drive missing from vg
+# 21 = drive missing from vg & multi-path errors found
+# 22 = drive missing from vg & mulit-path errors found & lspath errors
+# 23 = drive missing from vg & lspath errors
+# 998 = OS type not supported.
+# 999 = multi-path software not found.
+#########################################################################
+# Fixes
+# v12 Correct return codes on Linux section
+# v13 Added MPIO check for Sun
+#########################################################################
+
+#OS Name
+OSNAME=`uname -s`
+STATUS=0
+
+
+# Check AIX systems
+if [ "${OSNAME}" = "AIX" ]; then
+
+   # Test for EMC storage
+   #
+   if test -f "/usr/sbin/powermt" ; then
+       AIXEMC=`/usr/sbin/powermt display |egrep "degraded|failed" |wc -l`
+        if [ "${AIXEMC}" -gt 0 ];then
+           STATUS=1
+        fi
+
+     #echo "${STATUS} aix emc"
+
+   # Test for HDS storage
+   #
+   elif test -f "/usr/DynamicLinkManager/bin/dlnkmgr" ;then
+       AIXHDS=`/usr/DynamicLinkManager/bin/dlnkmgr view -path |head -n 3 |tail -1 |awk '{ print $1 }'|grep Offline | wc -l`
+        if [ "${AIXHDS}" -gt 0 ]; then
+           STATUS=1
+        fi
+
+     #echo "${STATUS} aix hds"
+
+
+   # Test for SDDPCM
+   #
+   elif test -f "/usr/sbin/pcmpath"  ; then
+       AIXPCM=`/usr/sbin/pcmpath query device |egrep -i "failed|offline" |wc -l`
+        if [ "${AIXPCM}" -gt 0 ]; then
+           STATUS=1
+        fi
+
+     #echo "$STATUS aix pcm"
+
+
+   # Test for SDD
+   #
+   elif test -f "/usr/sbin/datapath" ; then
+       AIXSDD=`/usr/sbin/datapath query device | egrep -i "dead|offline|invalid" |wc -l`
+        if [ "${AIXSDD}" -gt 0 ]; then
+           STATUS=1
+        fi
+     #echo "$STATUS aix sdd"
+
+
+   # Test for Veritas
+   #
+   elif test -f "/usr/sbin/vxdisk" ;then
+       AIXVTAS=`/usr/sbin/vxdisk path | grep -i disabled | wc -l`
+        if  [ "${AIXVTAS}" -gt 0 ]; then
+           STATUS=1
+        fi
+     #echo "$STATUS aix veritas"
+
+
+   # No multi-path software found
+   else
+        STATUS=999
+        #echo $STATUS
+   fi
+# Always check for MPIO-lspath
+  if test -f "/usr/sbin/lspath" ;then
+   AIXMPIO=`/usr/sbin/lspath | egrep -i "missing|disabled|failed|defined" | wc -l`
+     if  [ "${AIXMPIO}" -gt 0 ]; then
+         if [ "${STATUS}" -eq 1 ];then
+            STATUS=2
+         elif [ "${STATUS}" -ne 1 ];then
+            STATUS=3
+         fi
+     elif [ "${STATUS}" -gt 3 ];then
+          STATUS=0
+     fi
+  fi
+#echo "$STATUS aix mpio"
+
+# Check missing disk in VG
+CKVGMD=`lsvg -p $(lsvg -o) |grep "missing" |wc -l`
+if [ "${CKVGMD}" -gt 0 ]; then
+      if [ "${STATUS}" -eq 1 ];then
+         STATUS=21
+      elif [ "${STATUS}" -eq 2 ];then
+         STATUS=22
+      elif [ "${STATUS}" -eq 3 ];then
+         STATUS=23
+      elif [ "${STATUS}" -gt 3 ];then
+          STATUS=20
+      else
+         STATUS=20
+      fi
+      #echo "missing disk in vg"
+      #echo "$STATUS VG check"
+fi
+
+      #echo "$STATUS VG check"
+
+# End AIX check
+
+###########################################################
+#Check HP-UX systems
+#
+elif [ "${OSNAME}" = "HP-UX" ]; then
+
+   # Test for EMC storage
+   #
+   if test -f "/sbin/powermt" ; then
+        HPEMC=`/sbin/powermt display |egrep -i "degraded|failed" |wc -l`
+         if [ "${HPEMC}" -gt 0 ]; then
+            STATUS=1
+         fi
+
+     #echo "$STATUS hp emc"
+
+
+   # Test for HDS storage
+   #
+   elif test -f "/opt/DynamicLinkManager/bin/dlnkmgr" ; then
+       HPHDS=`/opt/DynamicLinkManager/bin/dlnkmgr view -path |head -n 3 |tail -1 |awk '{ print $1 }'|grep Offline | wc -l`
+        if [ "${HPHDS}" -gt 0 ]; then
+           STATUS=1
+        fi
+
+     #echo "$STATUS hp hds"
+
+   # Test for IBM SDD
+   #
+   elif test -f "/opt/IBMsdd/bin/datapath" ; then
+       HPSDD=`/opt/IBMsdd/bin/datapath query device | egrep -i "dead|offline|invalid" |wc -l`
+        if [ "${HPSDD}" -gt 0 ]; then
+           STATUS=1
+        fi
+     #echo "$STATUS hp sdd"
+
+   # No multi-path software found
+   else
+        STATUS=999
+        #echo $STATUS
+   fi
+
+# End of HP-UX check
+#
+
+
+###########################################################
+# Check SUN systems
+#
+elif [ "${OSNAME}" = "SunOS" ]; then
+   SUNOSVERSION=`uname -r | cut -d "." -f 2`
+   SUNMPFOUND=0
+   # Test for Veritas storage
+   #
+   if test -f "/usr/sbin/vxdisk" ; then
+     SUNMPFOUND=1
+     SUNVTAS=`/usr/sbin/vxdisk path | grep -i disabled | wc -l`
+        if [ "${SUNVTAS}" -gt 0 ]; then
+           STATUS=1
+        fi
+     #echo "$STATUS sun veritas"
+   fi
+
+
+
+
+# Test for MPxIO
+
+#
+#Check Solaris version to check MPxIO
+
+   if [ "$SUNOSVERSION" == 10 ] && [ "`/usr/bin/zonename`" = "global" ] ;then
+      #echo "Solaris 10"
+      CHECKMPxIO=`grep "^mpxio-disable" /kernel/drv/fp.conf | cut -d "=" -f 2 | cut -d '"' -f 2`
+          if [ "$CHECKMPxIO" == "no" ];then
+             SUNMPFOUND=1
+             #echo "Checking MPxIO on Solaris 10"
+             for i in $(/usr/sbin/luxadm probe | grep "Logical Path:" | cut -d ':' -f 2)
+                 do
+                   #echo $i
+                   echo ".\c"; NL=y
+                   SUNMPxIO=`/usr/sbin/luxadm display $i | grep -i state | grep -v ONLINE | wc -l`
+                      if [ "${SUNMPxIO}" -gt 0 ];then
+                         #echo "Error detected on MPxIO on Solaris 10"
+                         STATUS=1
+                      fi
+                 done
+           fi
+
+      # SUN Solaris 9
+   elif [ "$SUNOSVERSION" == 9 ];then
+        #echo "Solaris 9"
+        CHECKMPxIO=`grep "^mpxio-disable" /kernel/drv/scsi_vhci.conf | cut -d "=" -f 2 | cut -d '"' -f 2`
+            if [ "$CHECKMPxIO" == "no" ];then
+               SUNMPFOUND=1
+               #echo "Checking MPxIO on Solaris 9"
+               for i in $(/usr/sbin/luxadm probe | grep "Logical Path:" | cut -d ':' -f 2)
+                   do
+                    #echo $i
+                    SUNMPxIO=`/usr/sbin/luxadm display $i | grep -i state | grep -v ONLINE | wc -l`
+                        if [ "${SUNMPxIO}" -gt 0 ];then
+                           #echo "Error detected on MPxIO on Solaris 9"
+                           STATUS=1
+                        fi
+                    done
+             fi
+   fi
+
+   # Test for EMC storage
+   #
+   if test -f "/etc/powermt" ; then
+       SUNMPFOUND=1
+       SUNEMC=`/etc/powermt display |egrep "degraded|failed" |wc -l`
+        if [ "${SUNEMC}" -gt 0 ];then
+           STATUS=1
+        fi
+
+     #echo "${STATUS} sun emc"
+    fi
+
+   # No multi-path software found
+   if [ "$SUNMPFOUND" == 0 ]; then
+        STATUS=999
+        #echo $STATUS
+   fi
+# End of SUN check
+
+###########################################################
+# Check Linux systems
+#
+elif [ "${OSNAME}" = "Linux" ]; then
+
+   # Test for SDD
+   #
+   if test -f "/usr/sbin/datapath" ; then
+       LINUXSDD=`/usr/sbin/datapath query device | egrep -i "dead|offline|invalid" |wc -l`
+        if [ "${LINUXSDD}" -gt 0 ]; then
+           STATUS=1
+        fi
+     #echo "$STATUS linux sdd"
+
+   # Test for EMC
+   #
+   elif test -f "/sbin/powermt" ; then
+       LINUXEMC=`/sbin/powermt display | egrep -i "degraded|failed" | wc -l`
+        if [ "${LINUXEMC}" -gt 0 ]; then
+           STATUS=1
+        fi
+       #echo "$STATUS linux emc"
+
+   # Test for RDAC
+   #
+   elif test -f "/usr/sbin/mppUtil" ; then
+       LINUXRDAC=`/usr/sbin/mppUtil -S | egrep -i "offline|down" | wc -l`
+        if [ "${LINUXRDAC}" -gt 0 ]; then
+           STATUS=1
+        fi
+     #echo "$STATUS linux rdac"
+
+   # Test for Linux native multipathing
+   #
+   elif test -f "/sbin/multipath" ; then
+     LINUXNMP=`/sbin/multipath | egrep -i "faulty|failed" | wc -l`
+      if [ "${LINUXNMP}" -gt 0 ]; then
+         STATUS=1
+      fi
+    #echo "$STATUS linux native multipathing"
+
+        # Linux  check for MPIO-lspath
+  elif test -f "/usr/sbin/lspath" ;then
+   LINUXMPIO=`/usr/sbin/lspath | egrep -i "missing|disabled|failed|defined" | wc -l`
+     if  [ "${LINUXMPIO}" -gt 0 ]; then
+         if [ "${STATUS}" -eq 1 ];then
+            STATUS=2
+         elif [ "${STATUS}" -ne 1 ];then
+            STATUS=3
+         fi
+     elif [ "${STATUS}" -gt 3 ];then
+          STATUS=0
+     fi
+        #echo "$STATUS Linux mpio"
+
+
+   # Test for Veritas
+   #
+   elif test -f "/usr/sbin/vxdisk" ;then
+       LINUXVTAS=`/usr/sbin/vxdisk path | grep -i disabled | wc -l`
+        if  [ "${LINUXVTAS}" -gt 0 ]; then
+           STATUS=1
+        fi
+     #echo "$STATUS linux veritas"
+
+
+   # No multi-path software found
+   else
+        STATUS=999
+        #echo $STATUS
+   fi
+
+# End Linux check
+
+###########################################################
+
+# Unknown OS type|
+else
+        STATUS=998
+        #echo $STATUS
+
+fi
+if [ ${STATUS} -eq 0 ]
+then
+        if [ "$NL" = "y" ]
+        then
+                echo "\n"
+        fi
+        echo " MPIO OK "
+elif [ ${STATUS} -eq 999 ]
+then
+        echo " MPIO Not on this server"
+else
+        echo "MPIO Final Status=${STATUS} call UNIX support"
+fi
+# EOF
