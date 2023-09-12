@@ -1,0 +1,240 @@
+# Modification date:
+# v2 01/11/2014 added version display, linux commands
+# v3 04/05/2014 added date and server name
+# v3 10/10/2014 added luxadm -e port
+# v4 11/11/2014 added metadb -i
+# v4 02/20/2015 added list for  /etc/cron.d/queuedefs
+#
+#
+# Modified By: Eric Stewart
+#************************************************************************
+VERSION=v4
+USER=`id | cut -f2 -d"("|cut -f1 -d")"`
+if [ "$USER" != "root" ]
+then
+        echo must be run as root or sudo
+        exit
+fi
+PATH=$PATH:/bin:/usr/bin:/usr/sbin
+TIME=`date '+%y%m%d%H'`
+HOST=`uname -n`
+FILE=/sys_adm/$HOST\_`cat /.loc`_snapshot.$TIME
+
+echo $VERSION " " `uname -n` `cat /.loc` `date`
+echo $VERSION " " `uname -n` `cat /.loc` `date` > $FILE
+
+uname -a >>$FILE
+echo " Running  df -k " >> $FILE
+echo " "                >> $FILE
+df -k                   >> $FILE
+echo " "                >> $FILE
+
+echo " Running  cat /etc/hosts " >> $FILE
+echo " "                >> $FILE
+cat /etc/hosts          >> $FILE
+echo " "                >> $FILE
+
+if [ -f /sbin/dspmq ]
+then
+        echo " Running  dspmq         " >> $FILE
+        echo " "                >> $FILE
+        dspmq                   >> $FILE
+        echo " "                >> $FILE
+else
+        echo " "                >> $FILE
+        echo "   dspmq skipped " >> $FILE
+        echo " "                >> $FILE
+fi
+if [ -f  /etc/cron.d/queuedefs ]
+then
+        echo "Listing  /etc/cron.d/queuedefs "  >> $FILE
+        echo " "  >> $FILE
+        cat  /etc/cron.d/queuedefs   >> $FILE
+        echo " "  >> $FILE
+fi
+if [ -f /opt/VRTSvcs/bin/hastatus ]
+then
+        echo " Running  /opt/VRTSvcs/bin/hastatus -summ " >> $FILE
+        echo " "                                          >> $FILE
+        /opt/VRTSvcs/bin/hastatus -summ                   >> $FILE
+        echo " "                                          >> $FILE
+else
+        echo " "                                          >> $FILE
+        echo "   /opt/VRTSvcs/bin/hastatus -summ skipped " >> $FILE
+        echo " "                                          >> $FILE
+fi
+if [ -f /sbin/svcs ]
+then
+        echo " Running  svcs -a " >> $FILE
+        echo " "                >> $FILE
+        svcs -a                 >> $FILE
+        echo " "                >> $FILE
+else
+        echo " "                >> $FILE
+        echo "   svcs -a skipped " >> $FILE
+        echo " "                >> $FILE
+fi
+
+# if this is a zone then we can skip cfgadm
+if [ -f /usr/bin/zonename ]
+then
+        if [ "`/usr/bin/zonename`" = "global" ]
+        then
+                if [ -f /usr/sbin/cfgadm ]
+                then
+                        echo " Running  cfgadm -al     " >> $FILE
+                        echo " "                       >> $FILE
+                        cfgadm -al                     >> $FILE
+                        echo " "                       >> $FILE
+                fi
+                if [ -f /usr/sbin/dladm ]
+                then
+                        echo " Running  dladm show-dev "        >> $FILE
+                        echo " "                                >> $FILE
+                        dladm show-dev                          >> $FILE
+                        echo " "                                >> $FILE
+                fi
+        fi
+fi
+
+if [ -f /usr/sbin/metadb ]
+then
+        echo " Running  metadb -i  " >> $FILE
+        echo " "                       >> $FILE
+        metadb  -i                   >> $FILE
+        echo " "                       >> $FILE
+fi
+
+if [ -f /usr/sbin/metastat ]
+then
+        echo " Running  metastat -p  " >> $FILE
+        echo " "                       >> $FILE
+        metastat  -p                   >> $FILE
+        echo " "                       >> $FILE
+
+        echo " Running  metastat     " >> $FILE
+        echo " "                       >> $FILE
+        metastat                       >> $FILE
+        echo " "                       >> $FILE
+fi
+
+if [ -f /usr/bin/inq ]
+then
+        echo " Running  /usr/bin/inq " >> $FILE
+        echo " "                       >> $FILE
+        /usr/bin/inq                   >> $FILE
+        echo " "                       >> $FILE
+fi
+echo " "                       >> $FILE
+
+if [ -f /usr/sbin/luxadam ]
+then
+        echo " Running  /usr/sbin/luxadm " >> $FILE
+        echo " "                           >> $FILE
+        /usr/sbin/luxadm -e port           >> $FILE
+        echo " "                           >> $FILE
+fi
+
+
+echo " Running  netstat -rn  "         >> $FILE
+echo " "                               >> $FILE
+netstat -rn                            >> $FILE
+echo " "                               >> $FILE
+
+if [ -f /usr/sbin/vxdg ]
+then
+        echo " Running  vxdg   list     "      >> $FILE
+        echo " "                               >> $FILE
+        vxdg   list                            >> $FILE
+        echo " "                               >> $FILE
+
+        echo " Running  vxdg  -e  list     "      >> $FILE
+        echo " "                               >> $FILE
+        vxdg -e   list                            >> $FILE
+        echo " "                               >> $FILE
+
+        echo " Running  vxdisk list     "      >> $FILE
+        echo " "                               >> $FILE
+        vxdisk list                            >> $FILE
+        echo " "                               >> $FILE
+
+        echo " Running  vxprint -ht     "      >> $FILE
+        echo " "                               >> $FILE
+        vxprint -ht                            >> $FILE
+        echo " "                               >> $FILE
+fi
+
+
+echo " Running  ifconfig -a     "      >> $FILE
+echo " "                               >> $FILE
+ifconfig -a                            >> $FILE
+echo " "                               >> $FILE
+
+if [ -f /kernel/drv/lpfc.conf ]
+then
+        echo " Making kernel/drv backups "     >> $FILE
+        echo " cd /kernel/drv "                >> $FILE
+        cd /kernel/drv
+        echo " cp -p lpfc.conf lpfc.conf.$TIME "    >> $FILE
+               cp -p lpfc.conf lpfc.conf.$TIME
+fi
+if [ -f /kernel/drv/sd.conf ]
+then
+        echo " cd /kernel/drv "                >> $FILE
+        cd /kernel/drv
+        echo " cp -p sd.conf sd.conf.$TIME "        >> $FILE
+               cp -p sd.conf sd.conf.$TIME
+fi
+
+if [ -f /etc/system ]
+then
+        echo " cd /etc "                            >> $FILE
+        cd /etc
+        echo " cp -p system system.$TIME "          >> $FILE
+        cp -p system system.$TIME
+        echo " cp -p vfstab vfstab.$TIME "          >> $FILE
+        cp -p vfstab vfstab.$TIME
+        echo " "                                    >> $FILE
+fi
+
+echo " Running  ps -aef        "            >> $FILE
+echo " "                                    >> $FILE
+                ps -aef                     >> $FILE
+echo " "                                    >> $FILE
+if [ "`uname -s`" = "Linux" ]
+then
+        if [ -f /sbin/pvscan ]
+        then
+                echo " "                                    >> $FILE
+                echo " Running  pvscan         "            >> $FILE
+                echo " "                                    >> $FILE
+                /sbin/pvscan                                >> $FILE
+        else
+                echo " "                                    >> $FILE
+                echo " pvscan skipped "                     >> $FILE
+                echo " "                                    >> $FILE
+        fi
+        if [ -f /sbin/vxdisplay ]
+        then
+                echo " "                                    >> $FILE
+                echo " Running  vxdisplay      "            >> $FILE
+                echo " "                                    >> $FILE
+                /sbin/vxdisplay                             >> $FILE
+        else
+                echo " "                                    >> $FILE
+                echo " vxdisplay skipped "                  >> $FILE
+                echo " "                                    >> $FILE
+        fi
+        if [ -f /sbin/multipath ]
+        then
+                echo " "                                    >> $FILE
+                echo " Running  multipath -ll  "            >> $FILE
+                echo " "                                    >> $FILE
+                /sbin/multipath -ll                         >> $FILE
+        else
+                echo " "                                    >> $FILE
+                echo " multipath skipped "                  >> $FILE
+                echo " "                                    >> $FILE
+        fi
+fi
+chmod 755 $FILE
