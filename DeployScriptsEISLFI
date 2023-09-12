@@ -1,0 +1,879 @@
+#!/bin/bash
+set -x
+#*********************************************************************************************************************************************************************************************
+# Name           : Install_MainScript.sh
+# Purpose        : This script used to NEW REGIONS deploy :  Scripts, Parameter files, New Folder Creation, Grant Access and Calls Informatica Deploy (DepoyInformaticaObject.sh) script.
+# Author         : Ramana Pampana
+# Date           :  2023-03-07
+#*********************************************************************************************************************************************************************************************
+# Modification History
+##********************************************************************************************************************************************************************************************
+# Invocation     : Install_MainScript.sh <DEPLOY_DIR> <RELEASE_COMMIT-ID> <ENVIRONMENT dev/qa/uat/prd> <PROJ_NAME_UNIXFOLDER>
+#*********************************************************************************************************************************************************************************************
+# Details : Deploy files must have below extensions and formats: 
+# Parameter files *.par, Shell scripts *.sh, UnixfolderCreation Files *.txt, Workflows *.XML, Informatica Object List file *.lst, Inormatica control file *.XML.
+#
+#
+#*********************************************************************************************************************************************************************************************
+
+
+####-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+##														Declaring variables and Validating Environment variables/Folders
+####-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+dt=`date +%Y%m%d`
+dttm=${dt}'_'`date +%H%M%S`
+  
+DEPLOY_DIR=$1;
+REL_COMMIT_ID=$2;
+ENV=$3;
+PROJ_NAME_UNIXFOLDER=$4;
+
+
+HOSTNAME=$(hostname -s);
+
+if  [[ ${ENV} = 'qa' ]] &&  [[  ${HOSTNAME} = 'bgcclvfietlq1' || ${HOSTNAME} = 'bgcclvfietlq2' ]]
+then		
+					
+				LOG_FILE_TMP=/apps/wmapfi/Q005/infa_shared/wmapfi_Deployments/depl_logs/Install_MainScript'_'${dttm}'.log';
+else
+				LOG_FILE_TMP=/apps/wmapfi/infa_shared/wmapfi_Deployments/depl_logs/Install_MainScript'_'${dttm}'.log';
+fi
+
+   
+touch  ${LOG_FILE_TMP}; 
+
+echo '##################################' `date +%Y%m%d_%H%M%S`'- Started Validation of Parameters and Environemnt varibles ... '  >> ${LOG_FILE_TMP}
+echo 'Temp Log Name: ' ${LOG_FILE_TMP}
+
+	 
+	  if [[ $# -eq 4 ]]
+	  then
+			echo 'Parameters passed/Required  mandatory parameters are:' >>  ${LOG_FILE_TMP}
+			echo 'DEPLOY_DIR:' ${DEPLOY_DIR}'|REL_COMMIT_ID:'${REL_COMMIT_ID}'|ENVIRONMENT:'${ENV}'|PROJ_FOLDER_NAME:'${PROJ_NAME_UNIXFOLDER}  >>  ${LOG_FILE_TMP}
+	  else
+			echo "Insufficient parameters passed, Required  mandatory parameters:  <DEPLOY_DIR> <REL_COMMIT-ID> <ENVIRONMENT DEV/QA/PRD> <PROJ_FOLDER_NAME> should be passed, Please check"  >>  ${LOG_FILE_TMP}
+			exit 10
+	  	
+	   fi
+	   
+		
+	  if [ ! -z ${1} ] 
+		then
+		  DEPLOY_DIR=${1};
+		else
+		  echo 'Invalid Home directory passed :' $1'/zero/blank vlaues passed as parameter' >> ${LOG_FILE_TMP}
+		  exit 20	
+	  fi
+
+	
+	  
+	 echo `date +%Y%m%d_%H%M%S` 'Environment:' ${ENV}  ' current host name :'  ${HOSTNAME}   >> ${LOG_FILE_TMP}
+	 	 
+		 
+	## Checking the executed Node /Devevelopment server etc.
+	
+	#### [[  ${HOSTNAME} = 'clddblaspia01' || ${HOSTNAME} = 'clddblaspia02' ]]
+	
+	 
+	    GEN_SCRPT_DIR=${DEPLOY_DIR}/deploy_scripts;
+		Env_flag='fail';
+					
+					 
+					 if  [[ ${ENV} = 'dev'  ||  ${ENV} = 'int'  ]] &&  [[  ${HOSTNAME} = 'bgcclvfietld1' ]]
+					 then
+						Env_flag='pass_dev';
+						
+					 elif  [[ ${ENV} = 'qa' ]] &&  [[  ${HOSTNAME} = 'bgcclvfietlq1' || ${HOSTNAME} = 'bgcclvfietlq2' ]]
+					 then		
+					 Env_flag='pass_qa';
+					 
+					 elif  [[ ${ENV} = 'uat' ]] &&  [[  ${HOSTNAME} = 'bgcclvfietlu1' || ${HOSTNAME} = 'bgcclvfietlu2'   || ${HOSTNAME} = 'bgcclvfietlu3' ]]
+					 then		
+					 Env_flag='pass_uat';
+					 elif  [[ ${ENV} = 'prd' ]] &&  [[  ${HOSTNAME} = 'bgcclvfietlp1' || ${HOSTNAME} = 'bgcclvfietlp3' || ${HOSTNAME} = 'bgcclvfietlp4'   ]]
+					 then		
+					 Env_flag='pass_prd';
+						
+					 else
+						 	Env_flag='fail';
+					  fi	 
+	
+		 echo `date +%Y%m%d_%H%M%S` 'Environment Flag:'  ${Env_flag}   >> ${LOG_FILE_TMP}
+		 
+	if  [[  ! -z ${ENV} ]]  &&  [[ ${Env_flag} = 'pass_dev'  || ${Env_flag} = 'pass_qa' || ${Env_flag} = 'pass_uat'   || ${Env_flag} = 'pass_prd' ]] && [[ ${Env_flag} != 'fail' ]]
+	   then
+	
+	
+		 	     EnvFile=${GEN_SCRPT_DIR}/.inf_environment_deploy_wmapfi'_'${ENV}.txt;
+	
+		  
+				if  [[ -d ${GEN_SCRPT_DIR} ]]  &&   [[ -f ${EnvFile} ]]  
+					then
+					echo  ${ENV} " Environment file calling : " ${EnvFile} >> ${LOG_FILE_TMP}
+					
+					cd ${GEN_SCRPT_DIR}
+					find . -type f \( -iname ".inf_environment_deploy_wmapfi*.txt" \) -exec dos2unix {} +;
+					chmod 755 *.* .inf_environment_deploy_wmapfi*.*
+					 
+					. ${EnvFile}
+				
+				else
+					echo 'Invalid Deploy Script Folder (or) Environment file , check :' ${EnvFile}  >> ${LOG_FILE_TMP}
+					exit 30
+				fi
+	 
+
+	 else
+			echo 'Invalid Deployment /Wrong Environment selected for deployment..  Please check the correct Host name :${HOSTNAME} /Environemnt: ${ENV} having the Deployment Artifacts :'  >> ${LOG_FILE_TMP}
+			exit 40
+	  fi
+
+	  LOG_FILE_NAME='Install_MainScript_'${REL_COMMIT_ID}'_'${dttm}'.log';
+
+	  if [ ! -z ${DEPLOY_LOG_DIR} ] 
+	  then
+		 LOG_FILE=${DEPLOY_LOG_DIR}/${LOG_FILE_NAME};
+	else
+		echo " ${DEPLOY_LOG_DIR} folder is invalid/not existing, please check log folder existing .env file"  >> ${LOG_FILE_TMP}
+		exit 50
+	 fi
+	 
+	 
+	 touch $LOG_FILE;
+     cat ${LOG_FILE_TMP} >> $LOG_FILE
+	 echo "Main Log file name with path:" $LOG_FILE >>  $LOG_FILE
+	 
+	 echo '##################################' `date +%Y%m%d_%H%M%S`'- Started Deployment process : '  >> ${LOG_FILE}
+
+	 
+####-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+##														Validating Folders inside deploy Tar files
+####-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+#-- Validation of folders inside the deploy tar file.
+
+		cd  ${DEPLOY_DIR}
+  
+		## Converting all files (.sh/par/txt files) inside the folders and subfolders to dos2unix format.
+		find . -type f \( -iname "*.sh" -o -iname "*.par" -o -iname "*.txt"  -o -iname "*.lst" \) -exec dos2unix {} +;  
+  
+		FolderCnt=`ls -l | grep '^d' | awk '{print $9}'| wc -l`;
+		
+		InformaticaObjects_Flag=0;
+		controlFiles_Flag=0;
+		ShellScripts_Flag=0;
+		GenericScripts_Flag=0;
+		ParameterFiles_Flag=0;
+		LookupFiles_Flag=0;
+		UnixFodlerCreation_Flag=0;
+		JavaCode_Flag=0;
+		MiscellaneousFiles_Flag=0;
+		otherFolders_Flag=0;
+		
+		if [[ $FolderCnt -gt 0 ]]
+		then
+				 for FOLDER_LIST in `ls -l | grep '^d' | awk '{print $9}'`
+				  do
+				   case $FOLDER_LIST in
+						
+								Informatica) 	    InformaticaObjects_Flag=1
+														;;
+								control_file_dir) 	controlFiles_Flag=1
+														;;														
+								Shell_Scripts) 	    ShellScripts_Flag=1
+														;;
+								GenericScripts) 	GenericScripts_Flag=1
+														;;
+								Parameter_Files) ParameterFiles_Flag=1
+														;;
+								LookUpFiles)   LookupFiles_Flag=1
+														;;			
+							    UnixFolderCreation)  UnixFodlerCreation_Flag=1
+														;;
+								JavaCode)  JavaCode_Flag=1						
+														;;															
+								MiscellaneousFiles)  MiscellaneousFiles_Flag=1						
+														;;
+								JavaCode)  JavaCode_Flag=1						
+														;;														
+								 *) 						otherFolders_Flag=1
+								 						;;		
+				 esac
+				done
+				
+			else
+		echo  ${DEPLOY_DIR} " folder is invalid/not contains required folders inside the tar."  >> ${LOG_FILE}
+		exit 60
+
+	fi
+	
+	
+######Temporary values below for disabling/Enabling required function if doing manual udpate.	
+#        InformaticaObjects_Flag=0;
+#		controlFiles_Flag=0;
+#		ShellScripts_Flag=0;
+#		GenericScripts_Flag=0;
+#		ParameterFiles_Flag=0;
+#		LookupFiles_Flag=0;
+#		UnixFodlerCreation_Flag=0;
+#		JavaCode_Flag=0;
+#		MiscellaneousFiles_Flag=0;
+#		otherFolders_Flag=0;
+		
+######temporary values below for disabling other functions, only enable which are needed.
+
+	
+echo 'Deployments Objects: Informatica :' $InformaticaObjects_Flag '| control_file_dir:'  $controlFiles_Flag '| 	Shell_Scripts:' $ShellScripts_Flag '| Parameter_Files :' $ParameterFiles_Flag '| LookUpFiles :' $LookupFiles_Flag '| UnixFolderCreation:' $UnixFodlerCreation_Flag '| MiscellaneousFiles:' $MiscellaneousFiles_Flag >>  ${LOG_FILE}
+
+			
+	if  [[ $otherFolders_Flag -eq 1 ]]
+	then
+		echo " WARNING: ${DEPLOY_DIR} folder is invalid/other deploy folders/files, they will be skipped/not deploy,  Check the tar."  >> ${LOG_FILE}
+	fi
+				
+####-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+##														Creating new Folders and ChangeMode permissions ..
+####-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+## More details: This step used to execute Create folder shellscript to create new folders , ChangeMode permissions(Be cautious while providing any commands inside this file. All commands will be executed as per Script file. 
+## File name must starts with "CreateFolders_", along with projectNameUnixfolderName. Exp : CreateFolders_dsdPowerUser_1.sh
+
+if  [[ $UnixFodlerCreation_Flag -eq 1 ]]
+	then
+			cd  ${DEPLOY_DIR}/UnixFolderCreation
+			FileCnt_f=`ls -p | grep -v / | grep 'CreateFolders_'| grep '.sh' | grep ${PROJ_NAME_UNIXFOLDER} | wc -l`;
+
+			
+			 if [[ $FileCnt_f -gt 0 ]] 
+			 then
+			 
+					  echo ------ `date +%Y%m%d_%H%M%S` '- Unix Folders creation processs started: '  >> ${LOG_FILE}
+					  
+						if [ ! -z ${PROJECT_HOME_DIR}} ] &&  [ ! -z ${PROJ_NAME_UNIXFOLDER} ]  
+							then
+				
+											for FILE_LIST in `ls -p | grep -v / | grep 'CreateFolders_'| grep '.sh'| grep ${PROJ_NAME_UNIXFOLDER}`
+											do
+												## Checking the file having valid commands mkdir/chmod only else it exits.
+											
+															if [ -s ${FILE_LIST} ] 
+																 then
+																			SensitivePaths_InvalidCommands=`cat $FILE_LIST | grep -v "^\s*$" | grep -v -e 'chmod ' -e 'mkdir ' |wc -l`;
+																			if [[ $SensitivePaths_InvalidCommands > 0 ]] 
+																			 then
+																			echo  'ERROR/FAILURE:  ' ${FILE_LIST} 'File contains invaild commands(other than mkdir and chmod) present.. Which may impact/corrupt exsiting folders/files, check the file ...'  >> ${LOG_FILE} 
+																			exit  70
+																			fi	
+															fi
+											  done
+											
+											
+											
+											for FILE_LIST in `ls -p | grep -v / | grep 'CreateFolders_'| grep '.sh'| grep ${PROJ_NAME_UNIXFOLDER} `
+											do
+																									 
+																							
+													if [ -s ${FILE_LIST} ] 
+													 then
+													 
+													 		 validCommands=`cat $FILE_LIST | grep -v "^\s*$" | grep -e 'chmod ' -e 'mkdir ' | wc -l`;
+
+																 if [[ $validCommands > 0 ]] 
+																		 then
+																			
+																				while read COMMAND_LIST
+																				do
+																								Directory_Flag=`echo ${COMMAND_LIST} | grep -v "^\s*$" |  grep 'mkdir ' | wc -l`;
+																								Access_Flag=`echo ${COMMAND_LIST} | grep -v "^\s*$" | grep 'chmod ' | wc -l`;
+																								
+																								echo commandList: ${COMMAND_LIST}
+																								
+																								echo Directory_Flag:$Directory_Flag, Access_Flag:$Access_Flag >> ${LOG_FILE} 
+																								
+																									if [[ $Directory_Flag = 1  ]]
+																									then
+																															CommandToExecute=`echo $COMMAND_LIST | grep 'mkdir '`
+																															NewDirectory=`echo $CommandToExecute  | sed "s/mkdir//" | sed "s/ -p//" | sed "s/ //"`
+																													
+																															if [[ -d $NewDirectory ]]
+																															then
+																																	echo 'WARNING: Folder: ' $NewDirectory ' already existing, so not creating skipping /this command ... check'  >> ${LOG_FILE} 
+																															else
+																															
+																																${CommandToExecute}
+																																			if [ $? != 0 ]
+																																				 then
+																																					echo 		'ERROR/FAILURE: while executing command ' $CommandToExecute 'Creation of folders, check the log file'    >> $LOG_FILE
+																																					exit 80
+																																			fi
+																																			
+																																echo 'Command : ' $CommandToExecute ' Executed successfully.'  >> ${LOG_FILE} 
+																																fi
+																												
+																									elif [[ $Access_Flag = 1 ]]
+																									then
+																										CommandToExecute=`echo $COMMAND_LIST | grep 'chmod '`
+																											
+																											${CommandToExecute}
+																											
+																													if [ $? != 0 ]
+																															 then
+																																	echo 		'ERROR/FAILURE:: while executing command ' $CommandToExecute 'Creation of folders, check the log file'    >> $LOG_FILE
+																																exit 90
+																														fi
+																											
+																											echo 'Command : ' $CommandToExecute ' Executed successfully.'  >> ${LOG_FILE} 
+																									fi
+																					#done	
+																					done <  ${FILE_LIST};
+																										
+																			fi
+																			
+													else	
+																	echo 		'Zero byte file/No Vaid commands to create Folders/Grant Access, Check the sh file/log file and File ' ${FILE_LIST}   >> $LOG_FILE
+																
+													fi
+													
+													
+											done
+						else
+								
+								echo ------`date +%Y%m%d_%H%M%S` ' invalid/Empty variables : ' ${PROJECT_HOME_DIR} '/' ${PROJ_NAME_UNIXFOLDER}  ' check...'  >> ${LOG_FILE}
+						fi
+				fi
+				echo ------ `date +%Y%m%d_%H%M%S` '- Unix Folders creation processs completed: '  >> ${LOG_FILE}
+  fi			
+	
+
+####-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+##														Deploying  related Shell script files ...
+####-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+	if  [[ $ShellScripts_Flag -eq 1 ]]
+	then
+			cd  ${DEPLOY_DIR}/Shell_Scripts
+			FileCnt_s=`ls -a -p | grep -v / | grep '.'| wc -l`;
+			 
+			 if [[ $FileCnt_s > 0 ]]
+			 then
+				  echo ------ `date +%Y%m%d_%H%M%S` '- Shell Script Files files Copying Started : '  >> ${LOG_FILE}
+				 
+						   if [ ! -z ${PROJECT_HOME_DIR}} ] &&  [ ! -z ${PROJ_NAME_UNIXFOLDER} ]  
+							then
+							
+							
+									   if [  -d ${PROJECT_HOME_DIR}/ShellScripts/${PROJ_NAME_UNIXFOLDER} ]  
+										then
+										  SCRPT_PATH=${PROJECT_HOME_DIR}/ShellScripts/${PROJ_NAME_UNIXFOLDER};
+								  
+												for FILE_LIST in `ls -a -p | grep -v / | grep '.'`
+												do
+													##Taking backup of script if existing: 	
+														if [ -f ${SCRPT_PATH}/${FILE_LIST} ] &&  [ ! -z ${FILE_LIST} ] &&  [ -f ${FILE_LIST} ]
+														 then
+													 
+														 cp -p ${SCRPT_PATH}/${FILE_LIST} ${SCRPT_PATH}/backup/${FILE_LIST}'_Backup_'${PROJ_NAME_UNIXFOLDER}'_'${dttm}
+														 echo 		'Shell Script file backup created at:' ${SCRPT_PATH}/backup/${FILE_LIST}'_Backup_'${PROJ_NAME_UNIXFOLDER}'_'${dttm}  >> ${LOG_FILE}
+														 fi
+													
+														cp ${FILE_LIST} ${SCRPT_PATH}
+																if [ $? != 0 ]
+																 then
+																	echo  		'ERROR/FAILURE: Shell Script copy failed :' ${FILE_LIST} 'to' ${SCRPT_PATH}  >> $LOG_FILE
+																	exit 100
+																fi
+														echo 		${FILE_LIST} '  Script copied to ' ${SCRPT_PATH}   >> ${LOG_FILE}
+													
+													chmod 755 ${SCRPT_PATH}/${FILE_LIST}
+												
+												   done
+											
+											fi
+											echo ------`date +%Y%m%d_%H%M%S` '- Script Files files Copying completed.'  >> ${LOG_FILE}
+					
+								else
+						   
+									echo ------`date +%Y%m%d_%H%M%S` ' invalid/Empty variables : ' ${PROJECT_HOME_DIR} '/' ${PROJ_NAME_UNIXFOLDER}  ' check...'  >> ${LOG_FILE}
+							
+								fi
+			
+			   fi
+	
+	fi
+
+####-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+##														Deploying Application Generic  Shell script files .
+####-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+	if  [[ $GenericScripts_Flag -eq 1 ]]
+	then
+			cd  ${DEPLOY_DIR}/GenericScripts
+			
+		
+			FileCnt_s=`ls -a -p | grep -v / | grep '.'| wc -l`;
+			 
+			 if [[ $FileCnt_s -gt 0 ]]
+			 then
+				  echo ------ `date +%Y%m%d_%H%M%S` '- Application Generic  Shell script Files  Copying Started....: '  >> ${LOG_FILE}
+
+							
+						   if [ ! -z ${PROJECT_HOME_DIR}} ] &&  [ ! -z ${PROJ_NAME_UNIXFOLDER} ]  
+							then
+							 			SCRPT_PATH=${PROJECT_HOME_DIR}/ShellScripts/AppGenericScripts;
+							
+									   if [  -d  ${SCRPT_PATH}  ]  
+										then
+											
+											EnvFile_flag=0;
+											
+								  			for FILE_LIST in `ls -a -p | grep -v / | grep '.'`
+												do
+													##Taking backup of script if existing: 	
+													
+														#### To copy the .environment files and replacing with generic /common environment file.
+														
+														if [[ ${FILE_LIST} = '.inf_environment_wmapfi_dev.txt'  ]] &&  [[ ${Env_flag} = 'pass_dev'  ]]
+														then
+															EnvFile_flag=1;
+														elif [[ ${FILE_LIST} = '.inf_environment_wmapfi_qa.txt'  ]] &&  [[ ${Env_flag} = 'pass_qa'  ]]
+														then
+																EnvFile_flag=2;
+														elif  [[ ${FILE_LIST} = '.inf_environment_wmapfi_uat.txt' ]]  &&  [[  ${Env_flag} = 'pass_uat'  ]]
+														then
+															EnvFile_flag=3;
+														elif  [[ ${FILE_LIST} = '.inf_environment_wmapfi_prd.txt' ]]  &&  [[  ${Env_flag} = 'pass_prd'  ]]
+														then
+															EnvFile_flag=4;
+														elif [[  ${FILE_LIST} != '.inf_environment_wmapfi_dev.txt'  &&  ${FILE_LIST} != '.inf_environment_wmapfi_qa.txt' &&  ${FILE_LIST} != '.inf_environment_wmapfi_uat.txt'   && ${FILE_LIST} != '.inf_environment_wmapfi_prd.txt'  ]]
+														then 
+															EnvFile_flag=5;
+														fi
+														
+														echo  '  Original App Script Name: ' ${FILE_LIST}   >> ${LOG_FILE}
+														
+													   if [ ${EnvFile_flag} -ge 1 ]  &&  [ ${EnvFile_flag} -le 4  ] &&  [ ! -z ${FILE_LIST} ]  &&  [ -f ${FILE_LIST} ]
+													   then
+													   
+																		if [ -f  ${SCRPT_PATH}/'.inf_environment_wmapfi.txt'  ]
+																		then
+																			cp -p ${SCRPT_PATH}/'.inf_environment_wmapfi.txt' ${SCRPT_PATH}/backup/'.inf_environment_wmapfi.txt_Backup_'${PROJ_NAME_UNIXFOLDER}'_'${dttm}
+																			echo 		' .Env backup file  at:' ${SCRPT_PATH}/backup/'.inf_environment_wmapfi.txt_Backup_'${PROJ_NAME_UNIXFOLDER}'_'${dttm}  >> ${LOG_FILE}
+																		fi
+																		echo 		${FILE_LIST} ' .Env file copied to ' ${SCRPT_PATH}/'.inf_environment_wmapfi.txt' >> ${LOG_FILE}
+																		cp ${FILE_LIST} ${SCRPT_PATH}/'.inf_environment_wmapfi.txt'
+																
+																		if [ $? != 0 ]
+																		then
+																		echo  		'ERROR/FAILURE: Application Generic  Shell  Script copy failed :' ${FILE_LIST} 'to' ${SCRPT_PATH}  >> $LOG_FILE
+																		exit 100
+																		fi
+																		
+																		chmod 755 ${SCRPT_PATH}/'.inf_environment_wmapfi.txt'
+																
+													   
+													   elif [ ${EnvFile_flag} -eq 5 ] &&  [ ! -z ${FILE_LIST} ]  &&  [ -f ${FILE_LIST} ]
+													   then
+															## for all generic application scripts copy /other than .env files
+																	if [ -f ${SCRPT_PATH}/${FILE_LIST} ]
+																	then
+																		cp -p ${SCRPT_PATH}/${FILE_LIST} ${SCRPT_PATH}/backup/${FILE_LIST}'_Backup_'${PROJ_NAME_UNIXFOLDER}'_'${dttm}
+																	echo 		' Script backup File at:' ${SCRPT_PATH}/backup/${FILE_LIST}'_Backup_'${PROJ_NAME_UNIXFOLDER}'_'${dttm}  >> ${LOG_FILE}
+																	fi
+																		echo 		${FILE_LIST} ' Script File copied to ' ${SCRPT_PATH} >> ${LOG_FILE}
+																		cp ${FILE_LIST} ${SCRPT_PATH}
+
+																		if [ $? != 0 ]
+																		then
+																		echo  		'ERROR/FAILURE: Application Generic  Shell  Script copy failed :' ${FILE_LIST} 'to' ${SCRPT_PATH}  >> $LOG_FILE
+																		exit 100
+																		fi
+																		
+																		chmod 755 ${SCRPT_PATH}/${FILE_LIST}
+														
+														fi	
+														
+														
+														   
+															EnvFile_flag=0;
+															
+												   done
+											
+											fi
+											echo ------`date +%Y%m%d_%H%M%S` '- Application Generic  Shell script/.Env files Copying completed.'  >> ${LOG_FILE}
+					
+								else
+						   
+									echo ------`date +%Y%m%d_%H%M%S` ' invalid/Empty variables : ' ${PROJECT_HOME_DIR} '/' ${PROJ_NAME_UNIXFOLDER}  ' check...'  >> ${LOG_FILE}
+							
+								fi
+			
+			   fi
+	
+	fi	
+	
+####-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+##														Deploying Parameter Files ...
+####-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+	
+
+	if  [[ $ParameterFiles_Flag -eq 1 ]]
+	then
+			cd  ${DEPLOY_DIR}/Parameter_Files
+			FileCnt_p=`ls -p | grep -v / | grep '.par'| wc -l`;
+			 
+			 if [[ $FileCnt_p > 0 ]]
+			 then
+				  echo ------`date +%Y%m%d_%H%M%S` '- Parameter Files files Copying : '  >> ${LOG_FILE}
+				 
+				    if [ ! -z ${PROJECT_HOME_DIR}} ] &&  [ ! -z ${PROJ_NAME_UNIXFOLDER} ]  
+					then
+					
+							   if [  -d ${PROJECT_HOME_DIR}/BWParam/${PROJ_NAME_UNIXFOLDER} ] 
+								then
+								  PARAM_PATH=${PROJECT_HOME_DIR}/BWParam/${PROJ_NAME_UNIXFOLDER};
+						  
+										for FILE_LIST in `ls -p | grep -v / | grep '.par'`
+										do
+											##Taking backup of  Parmeter if existing: 	
+											if [ -f ${PARAM_PATH}/${FILE_LIST} ]
+											 then
+										 
+											 cp -p ${PARAM_PATH}/${FILE_LIST} ${PARAM_PATH}/backup/${FILE_LIST}'_Backup_'${PROJ_NAME_UNIXFOLDER}'_'${dttm}
+											 echo 		'Parameter file backup created at:' ${PARAM_PATH}/backup/${FILE_LIST}'_Backup_'${PROJ_NAME_UNIXFOLDER}'_'${dttm}  >> ${LOG_FILE}
+											 fi
+											
+											cp ${FILE_LIST} ${PARAM_PATH}
+											   if [ $? != 0 ]
+												 then
+													echo 		'ERROR/FAILURE: Parameter file copy failed :' ${FILE_LIST} 'to' ${PARAM_PATH}  >> $LOG_FILE
+													exit 110
+												fi
+											echo 		${FILE_LIST} ' Parameter file copied to ' ${PARAM_PATH}   >> ${LOG_FILE}
+										
+										done
+									
+								fi
+								echo ------`date +%Y%m%d_%H%M%S` '- Parameter Files files Copying completed. '  >> ${LOG_FILE}
+					
+					else
+				   
+				    echo ------`date +%Y%m%d_%H%M%S` ' invalid/Empty variables : ' ${PROJECT_HOME_DIR} '/' ${PROJ_NAME_UNIXFOLDER}  ' check...'  >> ${LOG_FILE}
+					
+				   fi		
+			fi
+	 
+	 fi
+
+	 
+	 
+####-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+##														Deploying Lookup Files ...
+####-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+		 
+
+  	if  [[ $LookupFiles_Flag -eq 1 ]]
+	then
+	
+	
+			cd  ${DEPLOY_DIR}/LookUpFiles
+		
+			FileCnt_l=`ls -p | grep -v / | grep '.'| wc -l`;
+			 
+			 if [[ $FileCnt_l > 0 ]]
+			 then
+				  echo ------`date +%Y%m%d_%H%M%S` '- Lookup Files files Copying : '  >> ${LOG_FILE}
+				 
+				    if [ ! -z ${PROJECT_HOME_DIR}} ] &&  [ ! -z ${PROJ_NAME_UNIXFOLDER} ]  
+					then
+					
+							   if [  -d ${PROJECT_HOME_DIR}/LkpFiles/${PROJ_NAME_UNIXFOLDER} ] 
+								then
+								  LOOKUP_PATH=${PROJECT_HOME_DIR}/LkpFiles/${PROJ_NAME_UNIXFOLDER};
+						  
+										for FILE_LIST in `ls -p | grep -v / | grep '.'`
+										do
+											##Taking backup of  Lookup if existing: 	
+											if [ -f ${LOOKUP_PATH}/${FILE_LIST} ]
+											 then
+										 
+											 cp -p ${LOOKUP_PATH}/${FILE_LIST} ${LOOKUP_PATH}/backup/${FILE_LIST}'_Backup_'${PROJ_NAME_UNIXFOLDER}'_'${dttm}
+											 echo 		'Lookup file backup created at:' ${LOOKUP_PATH}/backup/${FILE_LIST}'_Backup_'${PROJ_NAME_UNIXFOLDER}'_'${dttm}  >> ${LOG_FILE}
+											 fi
+											
+											cp ${FILE_LIST} ${LOOKUP_PATH}
+											   if [ $? != 0 ]
+												 then
+													echo 		'ERROR/FAILURE: Lookup file copy failed :' ${FILE_LIST} 'to' ${LOOKUP_PATH}  >> $LOG_FILE
+													exit 120
+												fi
+											echo 		${FILE_LIST} ' Lookup file copied to ' ${LOOKUP_PATH}   >> ${LOG_FILE}
+										
+										done
+									
+								fi
+								echo ------`date +%Y%m%d_%H%M%S` '- Lookup Files files Copying completed. '  >> ${LOG_FILE}
+					
+					else
+				   
+				    echo ------`date +%Y%m%d_%H%M%S` ' invalid/Empty variables : ' ${PROJECT_HOME_DIR} '/' ${PROJ_NAME_UNIXFOLDER}  ' check...'  >> ${LOG_FILE}
+					
+				   fi		
+			fi	
+	   
+  fi   
+ 
+ ####-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+##														Deploying Java Code /Files /Jar files 
+####-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+	if  [[ $JavaCode_Flag -eq 1 ]]
+	then
+			cd  ${DEPLOY_DIR}/JavaCode
+			
+
+			
+			FileCnt_s=`ls  -a -p | grep -v / | grep '.'| wc -l`;
+			 
+			 if [[ $FileCnt_s > 0 ]]
+			 then
+				  echo ------ `date +%Y%m%d_%H%M%S` '- JavaCode  Files  Copying : '  >> ${LOG_FILE}
+				  
+				
+							
+						   if [ ! -z ${PROJECT_HOME_DIR}} ] &&  [ ! -z ${PROJ_NAME_UNIXFOLDER} ]  
+							then
+							 			SCRPT_PATH=${PROJECT_HOME_DIR}/JavaCode;
+							
+									   if [  -d  ${SCRPT_PATH}  ]  
+										then
+													 
+								  			for FILE_LIST in `ls -p | grep -v / | grep '.'`
+												do
+													##Taking backup of script if existing: 	
+														if [ -f ${SCRPT_PATH}/${FILE_LIST} ]
+														 then
+													 
+														 cp -p ${SCRPT_PATH}/${FILE_LIST} ${SCRPT_PATH}/backup/${FILE_LIST}'_Backup_'${PROJ_NAME_UNIXFOLDER}'_'${dttm}
+														 echo 		'JavaCode  Files backup created at:' ${SCRPT_PATH}/backup/${FILE_LIST}'_Backup_'${PROJ_NAME_UNIXFOLDER}'_'${dttm}  >> ${LOG_FILE}
+														 fi
+													
+														cp ${FILE_LIST} ${SCRPT_PATH}
+																if [ $? != 0 ]
+																 then
+																	echo  		'ERROR/FAILURE: Java Code files copy failed :' ${FILE_LIST} 'to' ${SCRPT_PATH}  >> $LOG_FILE
+																	exit 100
+																fi
+														echo 		${FILE_LIST} ' JavaCode  copied to ' ${SCRPT_PATH}   >> ${LOG_FILE}
+												
+												   done
+											
+											fi
+											echo ------`date +%Y%m%d_%H%M%S` '- JavaCode  Files  Copying completed.'  >> ${LOG_FILE}
+					
+								else
+						   
+									echo ------`date +%Y%m%d_%H%M%S` ' invalid/Empty variables : ' ${PROJECT_HOME_DIR} '/' ${PROJ_NAME_UNIXFOLDER}  ' check...'  >> ${LOG_FILE}
+							
+								fi
+			
+			   fi
+	
+	fi	
+####-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+##														Miscellaneous Files copy/Deploy ...
+####-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+##  All files which needs to copy should be placed in this folder along with copy instructions inside the file starting with : CopyFilesToDestPaths*.txt . 
+##  Copy instructions : "cp" commands with valid file and valid target path should be present in the file : CopyFilesToDestPaths*.txt.  File name must start with "CopyFilesToDestPaths" and 
+##  Suffix with UnixProjectFolder Name : Exp: CopyFilesToDestPaths1_dsdPowerUser.txt.  This fucntion only allows copy commands (no other commands).
+####-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+	
+if  [[ $MiscellaneousFiles_Flag -eq 1 ]]
+	then
+			cd  ${DEPLOY_DIR}/MiscellaneousFiles
+			
+			FileCnt_M=`ls -a -p | grep -v /| grep -v 'CopyFilesToDestPaths'| grep '.'| wc -l`;
+			FileCnt_MainFile=`ls -a -p | grep -v /| grep  'CopyFilesToDestPaths'| grep '.txt' |  grep ${PROJ_NAME_UNIXFOLDER} | wc -l`;
+				
+			
+			 if [[ $FileCnt_M > 0 ]]  && [[ $FileCnt_MainFile > 0 ]] 
+			 then
+			 
+					  echo ------ `date +%Y%m%d_%H%M%S` '- Miscellaneous/Other Files Deploy  started: '  >> ${LOG_FILE}
+					  
+						if [ ! -z ${PROJECT_HOME_DIR}} ] &&  [ ! -z ${PROJ_NAME_UNIXFOLDER} ]  
+							then
+				
+											for FILE_LIST in `ls -a -p | grep -v / | grep 'CopyFilesToDestPaths'| grep '.txt' | grep ${PROJ_NAME_UNIXFOLDER} `
+											do
+												## Checking the file having valid commands used (cp ) else it exits.
+											
+															if [ -s ${FILE_LIST} ] 
+																 then
+																			SensitivePaths_InvalidCommands=`cat $FILE_LIST | grep -v "^\s*$" | grep  -v -e 'cp ' |wc -l`;
+																			
+																			if [[ $SensitivePaths_InvalidCommands > 0 ]] 
+																			 then
+																			echo " ERROR/FAILURE:  ${$FILE_LIST} File contains invaild commands(other than cp ) present.. Which may impact/corrupt exsiting folders/files, check the file ..."  >> ${LOG_FILE} 
+																			exit  130
+																			fi	
+															fi
+											  done
+											
+											
+											
+											for FILE_LIST in `ls -a -p | grep -v / | grep 'CopyFilesToDestPaths' | grep '.txt' | grep ${PROJ_NAME_UNIXFOLDER} `
+											do
+																									 
+													if [ -s ${FILE_LIST} ] 
+													 then
+													 
+													 		 validCommands=`cat $FILE_LIST | grep -v "^\s*$" | grep 'cp '  | wc -l`;
+
+																 if [[ $validCommands > 0 ]] 
+																		 then
+																			
+																				while read COMMAND_LIST
+																				do
+																				
+																				##for COMMAND_LIST in `cat $FILE_LIST | grep -v "^\s*$" |  grep  'cp ' `
+																				##do
+																																										
+																								Copy_Flag=`echo $COMMAND_LIST | grep -v "^\s*$" | grep 'cp ' | wc -l`;
+																									
+																									if [[ $Copy_Flag = 1 ]]
+																									then
+																															CommandToExecute=`echo $COMMAND_LIST | grep -v "^\s*$" | grep 'cp '`
+																															TgtDirectory=`echo $CommandToExecute  | grep -v "^\s*$"|  grep 'cp ' | cut -f3 -d' '`
+																															SrcFileName=`echo $CommandToExecute  | grep -v "^\s*$"|  grep 'cp ' | cut -f2 -d' '`
+																													
+																															if [[ ! -d $TgtDirectory ]]
+																															then
+																																	echo 'WARNING: Folder: ' $TgtDirectory ' Not valid destination folder, Unable to copy/Skiping this command ... check log'  >> ${LOG_FILE} 
+																															else
+																																
+																																##Take the backup of file if alreadyExisting.
+																																		
+																																		
+																																		if [ -f ${TgtDirectory}/${SrcFileName} ]
+																																		 then
+																																	 
+																																		 cp -p ${TgtDirectory}/${SrcFileName} ${TgtDirectory}/${SrcFileName}'_Backup_'${PROJ_NAME_UNIXFOLDER}'_'${dttm}
+																																		 echo 		'BackupFile created at:' ${TgtDirectory}/${SrcFileName}'_Backup_'${PROJ_NAME_UNIXFOLDER}'_'${dttm}  >> ${LOG_FILE}
+																																		 fi
+
+																																## Executing the copy command provided
+																																
+																																	cd  ${DEPLOY_DIR}/MiscellaneousFiles
+																																	${CommandToExecute}
+																																				if [ $? != 0 ]
+																																					 then
+																																						echo 		'ERROR/FAILURE: while executing command ' $CommandToExecute ' copying/file, check the log file'    >> $LOG_FILE
+																																						exit 140
+																																				fi
+																																				
+																																	echo 'Command : ' $CommandToExecute ' Executed successfully.'  >> ${LOG_FILE} 
+																																fi
+																									
+																									fi
+																									
+																					done	< ${FILE_LIST}
+																										
+																			fi
+																			
+													else	
+																	echo 		'Zero byte file/No Vaid commands to copy Miscellaneous/Other Files, Check log file and File ' ${FILE_LIST}   >> $LOG_FILE
+																
+													fi
+													
+													
+											done
+						else
+								
+								echo ------`date +%Y%m%d_%H%M%S` ' invalid/Empty variables : ' ${PROJECT_HOME_DIR} '/' ${PROJ_NAME_UNIXFOLDER}  ' check...'  >> ${LOG_FILE}
+						fi
+				fi
+				echo ------ `date +%Y%m%d_%H%M%S` '- Miscellaneous/Other Files copy completed: '  >> ${LOG_FILE}
+  fi			
+	
+ 
+ 
+####-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+##														Deploying/Importing Informatica objects ...
+####-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+## impcntl.dtd file must be present in the control_file_dir, along with workflow xml files, Informatica_ObjectsFileList.lst and control files.
+
+ 
+if  [[ $InformaticaObjects_Flag -eq 1 ]] && [[ $controlFiles_Flag -eq 1 ]]
+then
+				 
+			
+				if [[ -s  ${GEN_SCRPT_DIR}/Install_MainScript.sh ]]  && [[  -s ${GEN_SCRPT_DIR}/DeployInformaticaObjects.sh ]]  
+				then
+				
+		  					cd  ${DEPLOY_DIR}/control_file_dir
+
+							if  [[  ! -z ${ENV} ]]  &&  [[ ${Env_flag} = 'pass_dev'  ]]
+							then
+							FileCnt_cn=`ls -p | grep -v / | grep -v 'impcntl.dtd' | grep 'control_wf_Common_File_dev.XML'| wc -l`;
+							
+							elif  [[  ! -z ${ENV} ]]  &&  [[  ${Env_flag} = 'pass_qa'  ]]
+							then
+							FileCnt_cn=`ls -p | grep -v / | grep -v 'impcntl.dtd' | grep 'control_wf_Common_File_qa.XML'| wc -l`;
+							
+							elif  [[  ! -z ${ENV} ]]  &&  [[  ${Env_flag} = 'pass_uat'  ]]
+							then
+							FileCnt_cn=`ls -p | grep -v / | grep -v 'impcntl.dtd' | grep 'control_wf_Common_File_uat.XML'| wc -l`;
+							
+							elif  [[  ! -z ${ENV} ]]  &&  [[  ${Env_flag} = 'pass_prd' ]]
+							then	
+								FileCnt_cn=`ls -p | grep -v / | grep -v 'impcntl.dtd' | grep 'control_wf_Common_File_prd.XML'| wc -l`;
+						
+							fi
+							
+							FileCnt_impcnt=`ls -p | grep -v / | grep 'impcntl.dtd'| wc -l`;
+							
+							cd  ${DEPLOY_DIR}/Informatica
+								FileCnt_ls=`cat ${DEPLOY_DIR}/Informatica/Informatica_ObjectsFileList.lst | grep '.XML' | wc -l`;
+								FileCnt_wf=`ls -p | grep -v / | grep '.XML'| wc -l`;
+
+								echo FileCnt_cn: $FileCnt_cn , FileCnt_impcnt: $FileCnt_impcnt, FileCnt_ls: $FileCnt_ls , FileCnt_wf: $FileCnt_wf >> ${LOG_FILE}
+								
+								
+									 if [[ $FileCnt_cn = 1 ]] && [[ $FileCnt_impcnt = 1 ]] && [[ $FileCnt_ls > 0 ]] && [[ $FileCnt_wf =  $FileCnt_ls ]] 
+									 then
+											echo ------ `date +%Y%m%d_%H%M%S`'- Started Deployment of Informatica Objects: '  >> ${LOG_FILE}
+									
+											. ${GEN_SCRPT_DIR}/DeployInformaticaObjects.sh ${DEPLOY_DIR} ${GEN_SCRPT_DIR} ${LOG_FILE} ${ENV}
+											
+													   if [ $? != 0 ]
+																	 then
+																		echo 		'ERROR/FAILURE: Informatica Deployment Failed, please check log file for more details:'  >> $LOG_FILE
+																		exit 150
+														  fi
+										 echo ------ `date +%Y%m%d_%H%M%S`'- Successfully completed  Informatica Objects Deployment: '  >> ${LOG_FILE}
+										 
+									else
+										 echo ------ `date +%Y%m%d_%H%M%S`'- ERROR/FAILURE : No Informatica Objects to Deploy / No matching count of workflows /No Control files / No Implicit Control File. Please check log.'  >> ${LOG_FILE}
+										 exit 160
+							
+									fi
+				else					
+					 echo ------ `date +%Y%m%d_%H%M%S`'- ERROR/FAILURE : No/Invalid Informatica Deploy Scripts ( Install_MainScript.sh) and DeployInformaticaObjects.sh scripts at deploy_scripts folder, Check  '  >> ${LOG_FILE}
+					 exit 170
+					
+				 	
+			    fi
+fi
+
+echo "Mainlog File name & Path:"  ${LOG_FILE} >> ${LOG_FILE}
+
+#####================================================================
+
+echo '##################################' `date +%Y%m%d_%H%M%S`'- Ended Deployment process.'  >> ${LOG_FILE}
+exit 0
+
+#####================================================================
